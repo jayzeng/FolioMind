@@ -114,7 +114,12 @@ final class DocumentStore {
         let faceIDs = combinedFaces.map { $0.id }
         let derivedTitle = title ?? hints?.personName.map { "\($0)'s Document" }
             ?? imageURLs.first!.deletingPathExtension().lastPathComponent
-        let docType = hints?.suggestedType ?? analyses.first?.docType ?? .generic
+        let docType = DocumentTypeClassifier.classify(
+            ocrText: combinedOCR,
+            fields: combinedFields,
+            hinted: hints?.suggestedType ?? analyses.first?.docType,
+            defaultType: .generic
+        )
 
         combinedFields.forEach { context.insert($0) }
         combinedFaces.forEach { context.insert($0) }

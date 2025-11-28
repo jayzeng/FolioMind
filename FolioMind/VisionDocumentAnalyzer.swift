@@ -30,18 +30,24 @@ struct VisionDocumentAnalyzer: DocumentAnalyzer {
     }
 
     func analyze(imageURL: URL, hints: DocumentHints?) async throws -> DocumentAnalysisResult {
-        let localText = try await ocrSource.recognizeText(at: imageURL)
+        let localText = try await ocrSource.recognizeText(at:imageURL)
         let faces = try await VisionFaceDetector().detectFaces(at: imageURL)
+        let classifiedLocalType = DocumentTypeClassifier.classify(
+            ocrText: localText,
+            fields: [],
+            hinted: hints?.suggestedType,
+            defaultType: defaultType
+        )
 
         let localResult = DocumentAnalysisResult(
             ocrText: localText,
             fields: [],
-            docType: hints?.suggestedType ?? defaultType,
+            docType: classifiedLocalType,
             faceClusters: faces
         )
 
         let cloudResult = try await fetchCloudResult(imageURL: imageURL)
-        return merge(local: localResult, cloud: cloudResult)
+        return merge(local: localResult, cloud: cloudResult, hints: hints)
     }
 
     private func fetchCloudResult(imageURL: URL) async throws -> DocumentAnalysisResult? {
@@ -49,15 +55,21 @@ struct VisionDocumentAnalyzer: DocumentAnalyzer {
         return try await cloudService.enrich(imageURL: imageURL)
     }
 
-    private func merge(local: DocumentAnalysisResult, cloud: DocumentAnalysisResult?) -> DocumentAnalysisResult {
+    private func merge(local: DocumentAnalysisResult, cloud: DocumentAnalysisResult?, hints: DocumentHints?) -> DocumentAnalysisResult {
         guard let cloud = cloud else {
             let filledFields = local.fields.isEmpty ? [
                 Field(key: "source", value: "vision_local", confidence: 0.6, source: .vision)
             ] : local.fields
+            let classified = DocumentTypeClassifier.classify(
+                ocrText: local.ocrText,
+                fields: filledFields,
+                hinted: hints?.suggestedType,
+                defaultType: local.docType
+            )
             return DocumentAnalysisResult(
                 ocrText: local.ocrText,
                 fields: filledFields,
-                docType: local.docType,
+                docType: classified,
                 faceClusters: local.faceClusters
             )
         }
@@ -66,11 +78,17 @@ struct VisionDocumentAnalyzer: DocumentAnalyzer {
         let mergedType = cloud.docType == .generic ? local.docType : cloud.docType
         let mergedFields = (local.fields + cloud.fields)
         let mergedFaces = local.faceClusters.isEmpty ? cloud.faceClusters : local.faceClusters
+        let classified = DocumentTypeClassifier.classify(
+            ocrText: mergedOCR,
+            fields: mergedFields,
+            hinted: hints?.suggestedType ?? mergedType,
+            defaultType: mergedType
+        )
 
         return DocumentAnalysisResult(
             ocrText: mergedOCR,
             fields: mergedFields,
-            docType: mergedType,
+            docType: classified,
             faceClusters: mergedFaces
         )
     }

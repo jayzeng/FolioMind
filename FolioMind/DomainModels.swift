@@ -9,8 +9,11 @@ import Foundation
 import SwiftData
 
 enum DocumentType: String, Codable, CaseIterable {
+    case creditCard
     case insuranceCard
     case idCard
+    case letter
+    case billStatement
     case receipt
     case generic
 }
