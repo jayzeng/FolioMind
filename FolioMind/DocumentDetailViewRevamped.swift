@@ -11,6 +11,7 @@ struct DocumentDetailViewRevamped: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
     @Bindable var document: Document
+    var reminderManager: ReminderManager?
 
     @State private var selectedTab: DetailTab = .overview
     @State private var showFullScreenImage: Bool = false
@@ -18,6 +19,9 @@ struct DocumentDetailViewRevamped: View {
     @State private var showDeleteAlert: Bool = false
     @State private var showEditOCRSheet: Bool = false
     @State private var copiedField: String?
+    @State private var showAddReminderSheet: Bool = false
+    @State private var showPermissionAlert: Bool = false
+    @State private var showShareSheet: Bool = false
 
     enum DetailTab: String, CaseIterable {
         case overview = "Overview"
@@ -209,6 +213,11 @@ struct DocumentDetailViewRevamped: View {
             // Key Information Cards
             keyInfoSection
 
+            // Reminders Section
+            if reminderManager != nil {
+                remindersSection
+            }
+
             Spacer()
         }
         .padding(16)
@@ -231,11 +240,17 @@ struct DocumentDetailViewRevamped: View {
                 genericInfo
             }
 
-            // All extracted fields with actionable buttons
-            if !document.fields.isEmpty {
+            // All extracted fields with actionable buttons (deduplicated)
+            let uniqueFields = deduplicateFields(document.fields)
+            if !uniqueFields.isEmpty {
                 VStack(spacing: 8) {
-                    ForEach(document.fields, id: \.id) { field in
-                        ActionableFieldChip(field: field)
+                    ForEach(uniqueFields, id: \.id) { field in
+                        ActionableFieldChip(
+                            field: field,
+                            onDelete: {
+                                deleteField(field)
+                            }
+                        )
                     }
                 }
             }
@@ -374,18 +389,134 @@ struct DocumentDetailViewRevamped: View {
         }
     }
 
+    // MARK: - Reminders Section
+
+    private var remindersSection: some View {
+        VStack(spacing: 12) {
+            HStack {
+                SectionHeader(title: "Reminders", icon: "bell.fill")
+                Spacer()
+                Button {
+                    showAddReminderSheet = true
+                } label: {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(.blue)
+                }
+            }
+
+            if document.reminders.isEmpty {
+                // Empty state
+                VStack(spacing: 8) {
+                    Image(systemName: "bell.slash")
+                        .font(.system(size: 40))
+                        .foregroundStyle(.secondary)
+                    Text("No reminders set")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 24)
+                .background(Color(.secondarySystemGroupedBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(document.reminders, id: \.id) { reminder in
+                        ReminderRow(
+                            reminder: reminder,
+                            onToggle: {
+                                Task {
+                                    await toggleReminder(reminder)
+                                }
+                            },
+                            onDelete: {
+                                Task {
+                                    await deleteReminder(reminder)
+                                }
+                            }
+                        )
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $showAddReminderSheet) {
+            if let reminderManager = reminderManager {
+                AddReminderSheet(
+                    document: document,
+                    reminderManager: reminderManager,
+                    onSave: { newReminder in
+                        document.reminders.append(newReminder)
+                        try? modelContext.save()
+                    }
+                )
+            }
+        }
+        .alert("Permission Required", isPresented: $showPermissionAlert) {
+            Button("Open Settings") {
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(url)
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("FolioMind needs permission to create reminders. Please enable Reminders access in Settings.")
+        }
+    }
+
+    private func toggleReminder(_ reminder: DocumentReminder) async {
+        guard let reminderManager = reminderManager else { return }
+
+        do {
+            if reminder.isCompleted {
+                // Uncomplete - would need to recreate
+                reminder.isCompleted = false
+            } else {
+                // Mark as complete
+                if let eventKitID = reminder.eventKitID {
+                    try await reminderManager.completeReminder(eventKitID: eventKitID)
+                }
+                reminder.isCompleted = true
+            }
+            try? modelContext.save()
+        } catch {
+            print("Error toggling reminder: \(error)")
+        }
+    }
+
+    private func deleteReminder(_ reminder: DocumentReminder) async {
+        guard let reminderManager = reminderManager else { return }
+
+        do {
+            // Delete from EventKit if exists
+            if let eventKitID = reminder.eventKitID {
+                try await reminderManager.deleteReminder(eventKitID: eventKitID)
+            }
+
+            // Remove from document
+            if let index = document.reminders.firstIndex(where: { $0.id == reminder.id }) {
+                document.reminders.remove(at: index)
+                modelContext.delete(reminder)
+                try? modelContext.save()
+            }
+        } catch {
+            print("Error deleting reminder: \(error)")
+        }
+    }
+
     // MARK: - Details Tab
 
     private var detailsTab: some View {
-        VStack(spacing: 16) {
+        let uniqueFields = deduplicateFields(document.fields)
+
+        return VStack(spacing: 16) {
             SectionHeader(title: "All Extracted Fields", icon: "list.bullet.rectangle.fill")
 
-            if document.fields.isEmpty {
+            if uniqueFields.isEmpty {
                 emptyFieldsView
             } else {
                 ScrollView {
                     VStack(spacing: 8) {
-                        ForEach(document.fields, id: \.id) { field in
+                        ForEach(uniqueFields, id: \.id) { field in
                             FieldRow(field: field, onCopy: { value in
                                 copyToClipboard(value)
                             })
@@ -465,6 +596,9 @@ struct DocumentDetailViewRevamped: View {
         .sheet(isPresented: $showEditOCRSheet) {
             EditOCRTextSheet(document: document)
         }
+        .sheet(isPresented: $showShareSheet) {
+            ShareSheet(document: document)
+        }
     }
 
     private var emptyOCRView: some View {
@@ -529,7 +663,7 @@ struct DocumentDetailViewRevamped: View {
     }
 
     private func shareDocument() {
-        // TODO: Implement share functionality
+        showShareSheet = true
     }
 
     private func deleteDocument() {
@@ -547,6 +681,38 @@ struct DocumentDetailViewRevamped: View {
             document.fields.append(newField)
         }
         try? modelContext.save()
+    }
+
+    private func deduplicateFields(_ fields: [Field]) -> [Field] {
+        var seen = Set<String>()
+        var unique: [Field] = []
+
+        for field in fields {
+            // Normalize the value for comparison
+            let normalizedValue: String
+            if field.key.lowercased().contains("phone") {
+                // For phone numbers, normalize by removing all non-digit characters except +
+                normalizedValue = field.value.filter { $0.isNumber || $0 == "+" }
+            } else {
+                normalizedValue = field.value.lowercased().trimmingCharacters(in: .whitespaces)
+            }
+
+            let key = "\(field.key.lowercased()):\(normalizedValue)"
+            if !seen.contains(key) {
+                seen.insert(key)
+                unique.append(field)
+            }
+        }
+
+        return unique
+    }
+
+    private func deleteField(_ field: Field) {
+        if let index = document.fields.firstIndex(where: { $0.id == field.id }) {
+            document.fields.remove(at: index)
+            modelContext.delete(field)
+            try? modelContext.save()
+        }
     }
 }
 
@@ -767,8 +933,10 @@ enum FieldAction {
 struct ActionableFieldChip: View {
     @Environment(\.modelContext) private var modelContext
     @Bindable var field: Field
+    var onDelete: (() -> Void)?
 
     @State private var showEditSheet: Bool = false
+    @State private var showDeleteConfirmation: Bool = false
 
     private var detectedActions: [FieldAction] {
         var actions: [FieldAction] = []
@@ -900,6 +1068,21 @@ struct ActionableFieldChip: View {
             .clipShape(RoundedRectangle(cornerRadius: 12))
         }
         .buttonStyle(.plain)
+        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            Button(role: .destructive) {
+                showDeleteConfirmation = true
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+        }
+        .alert("Delete Field", isPresented: $showDeleteConfirmation) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete", role: .destructive) {
+                onDelete?()
+            }
+        } message: {
+            Text("Are you sure you want to delete this field?")
+        }
         .sheet(isPresented: $showEditSheet) {
             FieldEditModal(
                 label: field.key.capitalized.replacingOccurrences(of: "_", with: " "),
@@ -915,6 +1098,9 @@ struct ActionableFieldChip: View {
                 onReset: {
                     field.reset()
                     try? modelContext.save()
+                },
+                onDelete: {
+                    onDelete?()
                 }
             )
         }
@@ -1090,10 +1276,12 @@ struct FieldEditModal: View {
     var originalValue: String? = nil
     let onSave: (String) -> Void
     var onReset: (() -> Void)? = nil
+    var onDelete: (() -> Void)? = nil
 
     @State private var editedValue: String = ""
     @State private var selectedDate: Date = Date()
     @State private var showResetConfirmation: Bool = false
+    @State private var showDeleteConfirmation: Bool = false
 
     private var keyboardType: UIKeyboardType {
         switch fieldType {
@@ -1192,6 +1380,17 @@ struct FieldEditModal: View {
                     }
                     .disabled(editedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
+
+                if onDelete != nil {
+                    ToolbarItem(placement: .bottomBar) {
+                        Button(role: .destructive) {
+                            showDeleteConfirmation = true
+                        } label: {
+                            Label("Delete Field", systemImage: "trash")
+                                .foregroundStyle(.red)
+                        }
+                    }
+                }
             }
             .onAppear {
                 editedValue = value
@@ -1209,6 +1408,15 @@ struct FieldEditModal: View {
                 if let originalValue = originalValue {
                     Text("This will restore the original value:\n\n\"\(originalValue)\"")
                 }
+            }
+            .alert("Delete Field", isPresented: $showDeleteConfirmation) {
+                Button("Cancel", role: .cancel) { }
+                Button("Delete", role: .destructive) {
+                    onDelete?()
+                    dismiss()
+                }
+            } message: {
+                Text("Are you sure you want to delete this field? This action cannot be undone.")
             }
         }
     }
@@ -1281,5 +1489,631 @@ struct EditOCRTextSheet: View {
             }
         }
     }
+}
+
+// MARK: - Reminder Components
+
+struct ReminderRow: View {
+    let reminder: DocumentReminder
+    let onToggle: () -> Void
+    let onDelete: () -> Void
+
+    @State private var showDeleteConfirmation = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            // Checkbox
+            Button {
+                onToggle()
+            } label: {
+                Image(systemName: reminder.isCompleted ? "checkmark.circle.fill" : "circle")
+                    .font(.title2)
+                    .foregroundStyle(reminder.isCompleted ? .green : .gray)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                // Title
+                Text(reminder.title)
+                    .font(.headline)
+                    .strikethrough(reminder.isCompleted)
+                    .foregroundStyle(reminder.isCompleted ? .secondary : .primary)
+
+                // Notes
+                if !reminder.notes.isEmpty {
+                    Text(reminder.notes)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+
+                // Due date and type
+                HStack(spacing: 8) {
+                    Label(formatDate(reminder.dueDate), systemImage: "calendar")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Divider()
+                        .frame(height: 12)
+
+                    Image(systemName: reminderTypeIcon(reminder.reminderType))
+                        .font(.caption)
+                        .foregroundStyle(reminderTypeColor(reminder.reminderType))
+                    Text(reminder.reminderType.rawValue.capitalized)
+                        .font(.caption)
+                        .foregroundStyle(reminderTypeColor(reminder.reminderType))
+                }
+            }
+
+            Spacer()
+
+            // Delete button
+            Button {
+                showDeleteConfirmation = true
+            } label: {
+                Image(systemName: "trash")
+                    .foregroundStyle(.red)
+            }
+        }
+        .padding(12)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .alert("Delete Reminder", isPresented: $showDeleteConfirmation) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete", role: .destructive) {
+                onDelete()
+            }
+        } message: {
+            Text("Are you sure you want to delete this reminder?")
+        }
+    }
+
+    private func formatDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        return formatter.string(from: date)
+    }
+
+    private func reminderTypeIcon(_ type: ReminderType) -> String {
+        switch type {
+        case .call: return "phone.fill"
+        case .appointment: return "calendar"
+        case .payment: return "creditcard.fill"
+        case .renewal: return "arrow.clockwise"
+        case .followUp: return "checkmark.circle"
+        case .custom: return "bell.fill"
+        }
+    }
+
+    private func reminderTypeColor(_ type: ReminderType) -> Color {
+        switch type {
+        case .call: return .blue
+        case .appointment: return .green
+        case .payment: return .red
+        case .renewal: return .orange
+        case .followUp: return .purple
+        case .custom: return .gray
+        }
+    }
+}
+
+// MARK: - Add Reminder Sheet
+
+struct AddReminderSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
+
+    let document: Document
+    let reminderManager: ReminderManager
+    let onSave: (DocumentReminder) -> Void
+
+    @State private var selectedSuggestion: ReminderSuggestion?
+    @State private var customTitle: String = ""
+    @State private var customNotes: String = ""
+    @State private var customDate: Date = Date().addingTimeInterval(86400) // Tomorrow
+    @State private var customType: ReminderType = .custom
+    @State private var showCustomForm: Bool = false
+    @State private var isCreating: Bool = false
+    @State private var errorMessage: String?
+
+    private var suggestions: [ReminderSuggestion] {
+        reminderManager.suggestReminders(for: document)
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if !suggestions.isEmpty && !showCustomForm {
+                    Section {
+                        ForEach(suggestions) { suggestion in
+                            SuggestionRow(
+                                suggestion: suggestion,
+                                isSelected: selectedSuggestion?.id == suggestion.id
+                            )
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                selectedSuggestion = suggestion
+                            }
+                        }
+                    } header: {
+                        Text("Suggested Reminders")
+                    }
+
+                    Section {
+                        Button {
+                            showCustomForm = true
+                        } label: {
+                            Label("Create Custom Reminder", systemImage: "plus.circle.fill")
+                        }
+                    }
+                } else {
+                    Section {
+                        TextField("Title", text: $customTitle)
+                            .textInputAutocapitalization(.sentences)
+
+                        TextField("Notes (optional)", text: $customNotes, axis: .vertical)
+                            .textInputAutocapitalization(.sentences)
+                            .lineLimit(2...4)
+
+                        DatePicker("Due Date", selection: $customDate, displayedComponents: [.date, .hourAndMinute])
+
+                        Picker("Type", selection: $customType) {
+                            ForEach(ReminderType.allCases, id: \.self) { type in
+                                HStack {
+                                    Image(systemName: reminderTypeIcon(type))
+                                    Text(type.rawValue.capitalized)
+                                }
+                                .tag(type)
+                            }
+                        }
+                    } header: {
+                        Text("Custom Reminder")
+                    }
+
+                    if !suggestions.isEmpty {
+                        Section {
+                            Button {
+                                showCustomForm = false
+                                customTitle = ""
+                                customNotes = ""
+                                customDate = Date().addingTimeInterval(86400)
+                                customType = .custom
+                            } label: {
+                                Label("Back to Suggestions", systemImage: "arrow.left")
+                            }
+                        }
+                    }
+                }
+
+                if let errorMessage = errorMessage {
+                    Section {
+                        Text(errorMessage)
+                            .foregroundStyle(.red)
+                            .font(.caption)
+                    }
+                }
+            }
+            .navigationTitle("Add Reminder")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Add") {
+                        Task {
+                            await createReminder()
+                        }
+                    }
+                    .disabled(!canCreate || isCreating)
+                }
+            }
+            .disabled(isCreating)
+        }
+    }
+
+    private var canCreate: Bool {
+        if showCustomForm {
+            return !customTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        } else {
+            return selectedSuggestion != nil
+        }
+    }
+
+    private func createReminder() async {
+        isCreating = true
+        errorMessage = nil
+
+        do {
+            // Request permission first
+            let hasPermission = await reminderManager.requestPermission()
+            guard hasPermission else {
+                errorMessage = "Permission denied. Please enable Reminders access in Settings."
+                isCreating = false
+                return
+            }
+
+            let title: String
+            let notes: String
+            let dueDate: Date
+            let type: ReminderType
+            let priority: Int
+
+            if let suggestion = selectedSuggestion {
+                title = suggestion.title
+                notes = suggestion.notes
+                dueDate = suggestion.dueDate
+                type = suggestion.type
+                priority = suggestion.priority
+            } else {
+                title = customTitle
+                notes = customNotes
+                dueDate = customDate
+                type = customType
+                priority = 5 // Medium
+            }
+
+            // Create in EventKit
+            let eventKitID = try await reminderManager.createReminder(
+                title: title,
+                notes: notes.isEmpty ? nil : notes,
+                dueDate: dueDate,
+                priority: priority
+            )
+
+            // Create our model
+            let reminder = DocumentReminder(
+                title: title,
+                notes: notes,
+                dueDate: dueDate,
+                reminderType: type,
+                isCompleted: false,
+                eventKitID: eventKitID
+            )
+
+            modelContext.insert(reminder)
+            onSave(reminder)
+
+            isCreating = false
+            dismiss()
+        } catch {
+            errorMessage = error.localizedDescription
+            isCreating = false
+        }
+    }
+
+    private func reminderTypeIcon(_ type: ReminderType) -> String {
+        switch type {
+        case .call: return "phone.fill"
+        case .appointment: return "calendar"
+        case .payment: return "creditcard.fill"
+        case .renewal: return "arrow.clockwise"
+        case .followUp: return "checkmark.circle"
+        case .custom: return "bell.fill"
+        }
+    }
+}
+
+struct SuggestionRow: View {
+    let suggestion: ReminderSuggestion
+    let isSelected: Bool
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: suggestion.typeIcon)
+                .font(.title2)
+                .foregroundStyle(colorFromString(suggestion.typeColor))
+                .frame(width: 32)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(suggestion.title)
+                    .font(.headline)
+
+                if !suggestion.notes.isEmpty {
+                    Text(suggestion.notes)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+
+                HStack(spacing: 8) {
+                    Label(formatDate(suggestion.dueDate), systemImage: "calendar")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Divider()
+                        .frame(height: 12)
+
+                    Text(suggestion.priorityLabel)
+                        .font(.caption)
+                        .foregroundStyle(priorityColor(suggestion.priority))
+                }
+            }
+
+            Spacer()
+
+            if isSelected {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.blue)
+            } else {
+                Image(systemName: "circle")
+                    .foregroundStyle(.gray)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func formatDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        return formatter.string(from: date)
+    }
+
+    private func colorFromString(_ colorString: String) -> Color {
+        switch colorString.lowercased() {
+        case "blue": return .blue
+        case "green": return .green
+        case "red": return .red
+        case "orange": return .orange
+        case "purple": return .purple
+        case "gray": return .gray
+        default: return .gray
+        }
+    }
+
+    private func priorityColor(_ priority: Int) -> Color {
+        switch priority {
+        case 1: return .red
+        case 5: return .orange
+        case 9: return .gray
+        default: return .gray
+        }
+    }
+}
+
+// MARK: - Share Sheet
+
+struct ShareSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let document: Document
+
+    @State private var shareItems: [Any] = []
+    @State private var showActivityView = false
+
+    enum ShareOption: String, CaseIterable, Identifiable {
+        case image = "Image"
+        case text = "Text"
+        case summary = "Summary"
+        case fields = "Extracted Fields"
+
+        var id: String { rawValue }
+
+        var icon: String {
+            switch self {
+            case .image: return "photo"
+            case .text: return "doc.text"
+            case .summary: return "doc.richtext"
+            case .fields: return "list.bullet.rectangle"
+            }
+        }
+
+        var description: String {
+            switch self {
+            case .image: return "Share the document image"
+            case .text: return "Share raw OCR text"
+            case .summary: return "Share formatted summary"
+            case .fields: return "Share extracted fields as text"
+            }
+        }
+    }
+
+    private var imageURL: URL? {
+        guard let assetURLString = document.assetURL else { return nil }
+        return URL(fileURLWithPath: assetURLString)
+    }
+
+    private var hasImage: Bool {
+        guard let url = imageURL else { return false }
+        return FileManager.default.fileExists(atPath: url.path)
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Text("Choose what to share")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                Section("Share Options") {
+                    if hasImage {
+                        ShareOptionRow(
+                            option: .image,
+                            isAvailable: true
+                        ) {
+                            shareImage()
+                        }
+                    }
+
+                    ShareOptionRow(
+                        option: .text,
+                        isAvailable: !document.ocrText.isEmpty
+                    ) {
+                        shareText()
+                    }
+
+                    ShareOptionRow(
+                        option: .summary,
+                        isAvailable: true
+                    ) {
+                        shareSummary()
+                    }
+
+                    ShareOptionRow(
+                        option: .fields,
+                        isAvailable: !document.fields.isEmpty
+                    ) {
+                        shareFields()
+                    }
+                }
+            }
+            .navigationTitle("Share Document")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $showActivityView) {
+            if !shareItems.isEmpty {
+                ActivityViewController(activityItems: shareItems)
+            }
+        }
+    }
+
+    private func shareImage() {
+        guard let imageURL = imageURL else { return }
+        shareItems = [imageURL]
+        showActivityView = true
+    }
+
+    private func shareText() {
+        shareItems = [document.ocrText]
+        showActivityView = true
+    }
+
+    private func shareSummary() {
+        let summary = generateSummary()
+        shareItems = [summary]
+        showActivityView = true
+    }
+
+    private func shareFields() {
+        let fieldsText = generateFieldsText()
+        shareItems = [fieldsText]
+        showActivityView = true
+    }
+
+    private func generateSummary() -> String {
+        var summary = """
+        \(document.title)
+        \(String(repeating: "=", count: document.title.count))
+
+        Type: \(document.docType.displayName)
+        """
+
+        if let capturedAt = document.capturedAt {
+            summary += "\nCaptured: \(formatDate(capturedAt))"
+        }
+
+        summary += "\nCreated: \(formatDate(document.createdAt))"
+
+        if let location = document.location {
+            summary += "\nLocation: \(location)"
+        }
+
+        if !document.fields.isEmpty {
+            summary += "\n\nExtracted Fields:"
+            summary += "\n" + String(repeating: "-", count: 20)
+            for field in document.fields {
+                summary += "\n• \(field.key.capitalized): \(field.value)"
+            }
+        }
+
+        if !document.ocrText.isEmpty {
+            summary += "\n\nExtracted Text:"
+            summary += "\n" + String(repeating: "-", count: 20)
+            summary += "\n\(document.ocrText)"
+        }
+
+        summary += "\n\n---\nGenerated by FolioMind"
+
+        return summary
+    }
+
+    private func generateFieldsText() -> String {
+        var text = "\(document.title) - Extracted Fields\n"
+        text += String(repeating: "=", count: 40) + "\n\n"
+
+        for field in document.fields {
+            text += "\(field.key.capitalized):\n"
+            text += "  \(field.value)\n"
+            text += "  Confidence: \(Int(field.confidence * 100))%\n\n"
+        }
+
+        text += "---\nGenerated by FolioMind"
+
+        return text
+    }
+
+    private func formatDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
+    }
+}
+
+struct ShareOptionRow: View {
+    let option: ShareSheet.ShareOption
+    let isAvailable: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button {
+            action()
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: option.icon)
+                    .font(.title3)
+                    .foregroundStyle(isAvailable ? .blue : .gray)
+                    .frame(width: 32)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(option.rawValue)
+                        .font(.headline)
+                        .foregroundStyle(isAvailable ? .primary : .secondary)
+
+                    Text(isAvailable ? option.description : "Not available")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                if isAvailable {
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+        .disabled(!isAvailable)
+    }
+}
+
+// MARK: - Activity View Controller
+
+struct ActivityViewController: UIViewControllerRepresentable {
+    let activityItems: [Any]
+    let applicationActivities: [UIActivity]? = nil
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        let controller = UIActivityViewController(
+            activityItems: activityItems,
+            applicationActivities: applicationActivities
+        )
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 

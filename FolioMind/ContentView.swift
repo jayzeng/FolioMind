@@ -301,7 +301,7 @@ struct ContentView: View {
         ], spacing: 12) {
             ForEach(Array(documents.enumerated()), id: \.element.id) { index, document in
                 NavigationLink {
-                    DocumentDetailViewRevamped(document: document)
+                    DocumentDetailViewRevamped(document: document, reminderManager: services.reminderManager)
                 } label: {
                     DocumentGridCard(
                         document: document,

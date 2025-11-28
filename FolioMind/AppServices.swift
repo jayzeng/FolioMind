@@ -16,6 +16,7 @@ final class AppServices: ObservableObject {
     let searchEngine: SearchEngine
     let embeddingService: EmbeddingService
     let linkingEngine: LinkingEngine
+    let reminderManager: ReminderManager
 
     init() {
         let schema = Schema([
@@ -24,7 +25,8 @@ final class AppServices: ObservableObject {
             Field.self,
             FaceCluster.self,
             Embedding.self,
-            DocumentPersonLink.self
+            DocumentPersonLink.self,
+            DocumentReminder.self
         ])
         let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 
@@ -52,12 +54,21 @@ final class AppServices: ObservableObject {
             }
         }
 
+        // Initialize intelligent field extractor with on-device LLM if available
+        let llmService = LLMServiceFactory.create(type: .apple)
+        let intelligentExtractor = IntelligentFieldExtractor(
+            llmService: llmService,
+            useNaturalLanguage: true
+        )
+
         analyzer = VisionDocumentAnalyzer(
             cloudService: nil,
-            defaultType: .generic
+            defaultType: .generic,
+            intelligentExtractor: intelligentExtractor
         )
         embeddingService = SimpleEmbeddingService()
         linkingEngine = BasicLinkingEngine()
+        reminderManager = ReminderManager()
 
         let modelContext = ModelContext(modelContainer)
         searchEngine = HybridSearchEngine(

@@ -42,6 +42,15 @@ enum EmbeddingEntityType: String, Codable, CaseIterable {
     case person
 }
 
+enum ReminderType: String, Codable, CaseIterable {
+    case call
+    case appointment
+    case payment
+    case renewal
+    case followUp
+    case custom
+}
+
 @Model
 final class Embedding {
     @Attribute(.unique) var id: UUID
@@ -177,6 +186,38 @@ final class DocumentPersonLink {
 }
 
 @Model
+final class DocumentReminder {
+    @Attribute(.unique) var id: UUID
+    var title: String
+    var notes: String
+    var dueDate: Date
+    var reminderType: ReminderType
+    var isCompleted: Bool
+    var eventKitID: String?
+    var createdAt: Date
+
+    init(
+        id: UUID = UUID(),
+        title: String,
+        notes: String = "",
+        dueDate: Date,
+        reminderType: ReminderType = .custom,
+        isCompleted: Bool = false,
+        eventKitID: String? = nil,
+        createdAt: Date = Date()
+    ) {
+        self.id = id
+        self.title = title
+        self.notes = notes
+        self.dueDate = dueDate
+        self.reminderType = reminderType
+        self.isCompleted = isCompleted
+        self.eventKitID = eventKitID
+        self.createdAt = createdAt
+    }
+}
+
+@Model
 final class Document {
     @Attribute(.unique) var id: UUID
     var title: String
@@ -190,6 +231,7 @@ final class Document {
     var personLinks: [DocumentPersonLink]
     var faceClusterIDs: [UUID]
     var embedding: Embedding?
+    var reminders: [DocumentReminder]
 
     init(
         id: UUID = UUID(),
@@ -203,7 +245,8 @@ final class Document {
         assetURL: String? = nil,
         personLinks: [DocumentPersonLink] = [],
         faceClusterIDs: [UUID] = [],
-        embedding: Embedding? = nil
+        embedding: Embedding? = nil,
+        reminders: [DocumentReminder] = []
     ) {
         self.id = id
         self.title = title
@@ -217,5 +260,6 @@ final class Document {
         self.personLinks = personLinks
         self.faceClusterIDs = faceClusterIDs
         self.embedding = embedding
+        self.reminders = reminders
     }
 }
