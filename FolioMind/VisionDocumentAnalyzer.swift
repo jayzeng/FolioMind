@@ -32,16 +32,20 @@ struct VisionDocumentAnalyzer: DocumentAnalyzer {
     func analyze(imageURL: URL, hints: DocumentHints?) async throws -> DocumentAnalysisResult {
         let localText = try await ocrSource.recognizeText(at:imageURL)
         let faces = try await VisionFaceDetector().detectFaces(at: imageURL)
+
+        // Extract structured fields from OCR text
+        let extractedFields = FieldExtractor.extractFields(from: localText)
+
         let classifiedLocalType = DocumentTypeClassifier.classify(
             ocrText: localText,
-            fields: [],
+            fields: extractedFields,
             hinted: hints?.suggestedType,
             defaultType: defaultType
         )
 
         let localResult = DocumentAnalysisResult(
             ocrText: localText,
-            fields: [],
+            fields: extractedFields,
             docType: classifiedLocalType,
             faceClusters: faces
         )
@@ -57,23 +61,22 @@ struct VisionDocumentAnalyzer: DocumentAnalyzer {
 
     private func merge(local: DocumentAnalysisResult, cloud: DocumentAnalysisResult?, hints: DocumentHints?) -> DocumentAnalysisResult {
         guard let cloud = cloud else {
-            let filledFields = local.fields.isEmpty ? [
-                Field(key: "source", value: "vision_local", confidence: 0.6, source: .vision)
-            ] : local.fields
+            // No cloud result - use local extraction
             let classified = DocumentTypeClassifier.classify(
                 ocrText: local.ocrText,
-                fields: filledFields,
+                fields: local.fields,
                 hinted: hints?.suggestedType,
                 defaultType: local.docType
             )
             return DocumentAnalysisResult(
                 ocrText: local.ocrText,
-                fields: filledFields,
+                fields: local.fields,
                 docType: classified,
                 faceClusters: local.faceClusters
             )
         }
 
+        // Merge local and cloud results
         let mergedOCR = cloud.ocrText.isEmpty ? local.ocrText : cloud.ocrText
         let mergedType = cloud.docType == .generic ? local.docType : cloud.docType
         let mergedFields = (local.fields + cloud.fields)

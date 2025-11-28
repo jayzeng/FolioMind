@@ -31,7 +31,25 @@ final class AppServices: ObservableObject {
         do {
             modelContainer = try ModelContainer(for: schema, configurations: [configuration])
         } catch {
-            fatalError("Could not create ModelContainer: \(error)")
+            // If migration fails, delete the store and recreate it (development only)
+            print("Migration failed, attempting to recreate store: \(error)")
+
+            // Delete the old store
+            let storeURL = configuration.url
+            try? FileManager.default.removeItem(at: storeURL)
+
+            // Also remove associated files
+            let shmURL = storeURL.appendingPathExtension("shm")
+            let walURL = storeURL.appendingPathExtension("wal")
+            try? FileManager.default.removeItem(at: shmURL)
+            try? FileManager.default.removeItem(at: walURL)
+
+            // Try again with a fresh store
+            do {
+                modelContainer = try ModelContainer(for: schema, configurations: [configuration])
+            } catch {
+                fatalError("Could not create ModelContainer even after cleanup: \(error)")
+            }
         }
 
         analyzer = VisionDocumentAnalyzer(

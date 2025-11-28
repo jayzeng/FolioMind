@@ -16,6 +16,7 @@ struct DocumentDetailViewRevamped: View {
     @State private var showFullScreenImage: Bool = false
     @State private var showEditSheet: Bool = false
     @State private var showDeleteAlert: Bool = false
+    @State private var showEditOCRSheet: Bool = false
     @State private var copiedField: String?
 
     enum DetailTab: String, CaseIterable {
@@ -59,7 +60,7 @@ struct DocumentDetailViewRevamped: View {
                         .tag(DetailTab.ocr)
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
-                .frame(height: 600)
+                .frame(height: 1200)
             }
         }
         .background(Color(.systemGroupedBackground).ignoresSafeArea())
@@ -203,14 +204,10 @@ struct DocumentDetailViewRevamped: View {
         VStack(spacing: 16) {
             // Quick Stats
             statsSection
+                .padding(.top, 8)
 
             // Key Information Cards
             keyInfoSection
-
-            // All Recognized Fields
-            if !document.fields.isEmpty {
-                recognizedFieldsSection
-            }
 
             Spacer()
         }
@@ -233,6 +230,15 @@ struct DocumentDetailViewRevamped: View {
             default:
                 genericInfo
             }
+
+            // All extracted fields with actionable buttons
+            if !document.fields.isEmpty {
+                VStack(spacing: 8) {
+                    ForEach(document.fields, id: \.id) { field in
+                        ActionableFieldChip(field: field)
+                    }
+                }
+            }
         }
     }
 
@@ -241,16 +247,52 @@ struct DocumentDetailViewRevamped: View {
 
         return VStack(spacing: 8) {
             if let holder = details.holder {
-                InfoChip(label: "Cardholder", value: holder, icon: "person.fill", color: .blue)
+                EditableInfoChip(
+                    label: "Cardholder",
+                    value: holder,
+                    icon: "person.fill",
+                    color: .blue,
+                    fieldType: .text,
+                    onSave: { newValue in
+                        updateOrCreateField(key: "cardholder", value: newValue)
+                    }
+                )
             }
             if let issuer = details.issuer {
-                InfoChip(label: "Issuer", value: issuer, icon: "building.columns.fill", color: .purple)
+                EditableInfoChip(
+                    label: "Issuer",
+                    value: issuer,
+                    icon: "building.columns.fill",
+                    color: .purple,
+                    fieldType: .text,
+                    onSave: { newValue in
+                        updateOrCreateField(key: "issuer", value: newValue)
+                    }
+                )
             }
             if let pan = details.pan {
-                InfoChip(label: "Card Number", value: formatCardNumber(pan), icon: "creditcard.fill", color: .green, copyable: true)
+                EditableInfoChip(
+                    label: "Card Number",
+                    value: formatCardNumber(pan),
+                    icon: "creditcard.fill",
+                    color: .green,
+                    fieldType: .text,
+                    onSave: { newValue in
+                        updateOrCreateField(key: "card_number", value: newValue)
+                    }
+                )
             }
             if let expiry = details.expiry {
-                InfoChip(label: "Expires", value: expiry, icon: "calendar", color: .orange)
+                EditableInfoChip(
+                    label: "Expires",
+                    value: expiry,
+                    icon: "calendar",
+                    color: .orange,
+                    fieldType: .date,
+                    onSave: { newValue in
+                        updateOrCreateField(key: "expiry_date", value: newValue)
+                    }
+                )
             }
         }
     }
@@ -332,18 +374,6 @@ struct DocumentDetailViewRevamped: View {
         }
     }
 
-    private var recognizedFieldsSection: some View {
-        VStack(spacing: 12) {
-            SectionHeader(title: "Recognized Fields", icon: "list.bullet.rectangle.fill")
-
-            VStack(spacing: 8) {
-                ForEach(document.fields, id: \.id) { field in
-                    ActionableFieldChip(field: field)
-                }
-            }
-        }
-    }
-
     // MARK: - Details Tab
 
     private var detailsTab: some View {
@@ -393,13 +423,23 @@ struct DocumentDetailViewRevamped: View {
             HStack {
                 SectionHeader(title: "Extracted Text", icon: "doc.text.fill")
                 Spacer()
-                if !document.ocrText.isEmpty {
-                    Button {
-                        copyToClipboard(document.ocrText)
-                    } label: {
-                        Label("Copy All", systemImage: "doc.on.doc")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(document.docType.accentColor)
+                HStack(spacing: 12) {
+                    if !document.ocrText.isEmpty {
+                        Button {
+                            showEditOCRSheet = true
+                        } label: {
+                            Label("Edit", systemImage: "pencil")
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(document.docType.accentColor)
+                        }
+
+                        Button {
+                            copyToClipboard(document.ocrText)
+                        } label: {
+                            Label("Copy All", systemImage: "doc.on.doc")
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(document.docType.accentColor)
+                        }
                     }
                 }
             }
@@ -422,6 +462,9 @@ struct DocumentDetailViewRevamped: View {
             Spacer()
         }
         .padding(16)
+        .sheet(isPresented: $showEditOCRSheet) {
+            EditOCRTextSheet(document: document)
+        }
     }
 
     private var emptyOCRView: some View {
@@ -494,6 +537,17 @@ struct DocumentDetailViewRevamped: View {
         try? modelContext.save()
         dismiss()
     }
+
+    private func updateOrCreateField(key: String, value: String) {
+        if let existingField = document.fields.first(where: { $0.key.lowercased() == key.lowercased() }) {
+            existingField.value = value
+        } else {
+            let newField = Field(key: key, value: value, confidence: 1.0, source: .fused)
+            modelContext.insert(newField)
+            document.fields.append(newField)
+        }
+        try? modelContext.save()
+    }
 }
 
 // MARK: - Supporting Views
@@ -512,6 +566,61 @@ struct SectionHeader: View {
             Spacer()
         }
         .foregroundStyle(.secondary)
+    }
+}
+
+struct EditableInfoChip: View {
+    let label: String
+    let value: String
+    let icon: String
+    let color: Color
+    let fieldType: FieldEditType
+    let onSave: (String) -> Void
+
+    @State private var showEditSheet: Bool = false
+
+    var body: some View {
+        Button {
+            showEditSheet = true
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.title3)
+                    .foregroundStyle(color)
+                    .frame(width: 40, height: 40)
+                    .background(color.opacity(0.1))
+                    .clipShape(Circle())
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(label)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(value)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(12)
+            .background(Color(.secondarySystemGroupedBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+        }
+        .buttonStyle(.plain)
+        .sheet(isPresented: $showEditSheet) {
+            FieldEditModal(
+                label: label,
+                value: value,
+                icon: icon,
+                color: color,
+                fieldType: fieldType,
+                onSave: onSave
+            )
+        }
     }
 }
 
@@ -586,13 +695,17 @@ struct StatCard: View {
             Text(value)
                 .font(.title3.weight(.bold))
                 .foregroundStyle(.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
 
             Text(label)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 16)
+        .padding(.horizontal, 8)
         .background(Color(.secondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
@@ -642,19 +755,20 @@ struct FieldRow: View {
     }
 }
 
+enum FieldAction {
+    case call(String)
+    case message(String)
+    case email(String)
+    case openURL(URL)
+    case openMaps(String)
+    case copy(String)
+}
+
 struct ActionableFieldChip: View {
-    let field: Field
+    @Environment(\.modelContext) private var modelContext
+    @Bindable var field: Field
 
-    @State private var showCopied: Bool = false
-
-    private enum FieldAction {
-        case call(String)
-        case message(String)
-        case email(String)
-        case openURL(URL)
-        case openMaps(String)
-        case copy(String)
-    }
+    @State private var showEditSheet: Bool = false
 
     private var detectedActions: [FieldAction] {
         var actions: [FieldAction] = []
@@ -685,31 +799,125 @@ struct ActionableFieldChip: View {
         return actions
     }
 
+    private var fieldIcon: (icon: String, color: Color) {
+        let key = field.key.lowercased()
+
+        // Phone number
+        if key.contains("phone") || key.contains("tel") || key.contains("mobile") || key.contains("cell") {
+            return ("phone.fill", .green)
+        }
+        // Email
+        else if key.contains("email") || key.contains("mail") {
+            return ("envelope.fill", .blue)
+        }
+        // URL/Website
+        else if key.contains("url") || key.contains("website") || key.contains("link") {
+            return ("safari.fill", .blue)
+        }
+        // Address
+        else if key.contains("address") || key.contains("location") {
+            return ("map.fill", .red)
+        }
+        // Date
+        else if key.contains("date") || key.contains("expir") || key.contains("valid") {
+            return ("calendar", .orange)
+        }
+        // Amount/Money
+        else if key.contains("amount") || key.contains("balance") || key.contains("payment") || key.contains("due") {
+            return ("dollarsign.circle.fill", .green)
+        }
+        // Name
+        else if key.contains("name") || key.contains("holder") || key.contains("member") {
+            return ("person.fill", .blue)
+        }
+        // Default
+        else {
+            return ("tag.fill", .gray)
+        }
+    }
+
+    private var fieldType: FieldEditType {
+        let key = field.key.lowercased()
+
+        if key.contains("date") || key.contains("expir") || key.contains("valid") {
+            return .date
+        } else if key.contains("phone") || key.contains("tel") || key.contains("mobile") || key.contains("cell") {
+            return .phone
+        } else if key.contains("email") || key.contains("mail") {
+            return .email
+        } else if key.contains("url") || key.contains("website") {
+            return .url
+        } else if key.contains("amount") || key.contains("balance") || key.contains("payment") || key.contains("price") {
+            return .currency
+        } else {
+            return .text
+        }
+    }
+
     var body: some View {
-        HStack(spacing: 12) {
-            // Icon and label
-            VStack(alignment: .leading, spacing: 4) {
-                Text(field.key.capitalized)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text(field.value)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.primary)
-                    .lineLimit(2)
-            }
+        Button {
+            showEditSheet = true
+        } label: {
+            HStack(spacing: 12) {
+                // Icon
+                Image(systemName: fieldIcon.icon)
+                    .font(.title3)
+                    .foregroundStyle(fieldIcon.color)
+                    .frame(width: 40, height: 40)
+                    .background(fieldIcon.color.opacity(0.1))
+                    .clipShape(Circle())
 
-            Spacer()
+                // Label and value
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(field.key.capitalized.replacingOccurrences(of: "_", with: " "))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    HStack(spacing: 4) {
+                        Text(field.value)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                            .lineLimit(2)
 
-            // Action buttons
-            HStack(spacing: 8) {
-                ForEach(detectedActions.indices, id: \.self) { index in
-                    actionButton(for: detectedActions[index])
+                        if field.isModified {
+                            Image(systemName: "pencil.circle.fill")
+                                .font(.caption2)
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                }
+
+                Spacer()
+
+                // Action buttons
+                HStack(spacing: 6) {
+                    ForEach(0..<detectedActions.count, id: \.self) { index in
+                        actionButton(for: detectedActions[index])
+                    }
                 }
             }
+            .padding(12)
+            .background(Color(.secondarySystemGroupedBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
         }
-        .padding(12)
-        .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .buttonStyle(.plain)
+        .sheet(isPresented: $showEditSheet) {
+            FieldEditModal(
+                label: field.key.capitalized.replacingOccurrences(of: "_", with: " "),
+                value: field.value,
+                icon: fieldIcon.icon,
+                color: fieldIcon.color,
+                fieldType: fieldType,
+                originalValue: field.originalValue,
+                onSave: { newValue in
+                    field.value = newValue
+                    try? modelContext.save()
+                },
+                onReset: {
+                    field.reset()
+                    try? modelContext.save()
+                }
+            )
+        }
     }
 
     @ViewBuilder
@@ -722,9 +930,9 @@ struct ActionableFieldChip: View {
                 }
             } label: {
                 Image(systemName: "phone.fill")
-                    .font(.caption)
+                    .font(.system(size: 11))
                     .foregroundStyle(.white)
-                    .frame(width: 28, height: 28)
+                    .frame(width: 26, height: 26)
                     .background(Color.green)
                     .clipShape(Circle())
             }
@@ -736,9 +944,9 @@ struct ActionableFieldChip: View {
                 }
             } label: {
                 Image(systemName: "message.fill")
-                    .font(.caption)
+                    .font(.system(size: 11))
                     .foregroundStyle(.white)
-                    .frame(width: 28, height: 28)
+                    .frame(width: 26, height: 26)
                     .background(Color.blue)
                     .clipShape(Circle())
             }
@@ -750,9 +958,9 @@ struct ActionableFieldChip: View {
                 }
             } label: {
                 Image(systemName: "envelope.fill")
-                    .font(.caption)
+                    .font(.system(size: 11))
                     .foregroundStyle(.white)
-                    .frame(width: 28, height: 28)
+                    .frame(width: 26, height: 26)
                     .background(Color.blue)
                     .clipShape(Circle())
             }
@@ -762,9 +970,9 @@ struct ActionableFieldChip: View {
                 UIApplication.shared.open(url)
             } label: {
                 Image(systemName: "safari.fill")
-                    .font(.caption)
+                    .font(.system(size: 11))
                     .foregroundStyle(.white)
-                    .frame(width: 28, height: 28)
+                    .frame(width: 26, height: 26)
                     .background(Color.blue)
                     .clipShape(Circle())
             }
@@ -777,9 +985,9 @@ struct ActionableFieldChip: View {
                 }
             } label: {
                 Image(systemName: "map.fill")
-                    .font(.caption)
+                    .font(.system(size: 11))
                     .foregroundStyle(.white)
-                    .frame(width: 28, height: 28)
+                    .frame(width: 26, height: 26)
                     .background(Color.green)
                     .clipShape(Circle())
             }
@@ -787,19 +995,14 @@ struct ActionableFieldChip: View {
         case .copy(let text):
             Button {
                 UIPasteboard.general.string = text
-                showCopied = true
                 let generator = UINotificationFeedbackGenerator()
                 generator.notificationOccurred(.success)
-
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                    showCopied = false
-                }
             } label: {
-                Image(systemName: showCopied ? "checkmark" : "doc.on.doc")
-                    .font(.caption)
-                    .foregroundStyle(showCopied ? .white : .secondary)
-                    .frame(width: 28, height: 28)
-                    .background(showCopied ? Color.green : Color(.tertiarySystemGroupedBackground))
+                Image(systemName: "doc.on.doc")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 26, height: 26)
+                    .background(Color(.tertiarySystemGroupedBackground))
                     .clipShape(Circle())
             }
         }
@@ -860,6 +1063,223 @@ struct ActionableFieldChip: View {
         let hasNumbers = text.rangeOfCharacter(from: .decimalDigits) != nil
 
         return hasAddressKeyword && (hasMultipleParts || hasNumbers) && text.count > 10
+    }
+}
+
+// MARK: - Field Edit Types
+
+enum FieldEditType {
+    case text
+    case phone
+    case email
+    case url
+    case date
+    case currency
+}
+
+// MARK: - Field Edit Modal
+
+struct FieldEditModal: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let label: String
+    let value: String
+    let icon: String
+    let color: Color
+    let fieldType: FieldEditType
+    var originalValue: String? = nil
+    let onSave: (String) -> Void
+    var onReset: (() -> Void)? = nil
+
+    @State private var editedValue: String = ""
+    @State private var selectedDate: Date = Date()
+    @State private var showResetConfirmation: Bool = false
+
+    private var keyboardType: UIKeyboardType {
+        switch fieldType {
+        case .phone: return .phonePad
+        case .email: return .emailAddress
+        case .url: return .URL
+        case .currency: return .decimalPad
+        case .date, .text: return .default
+        }
+    }
+
+    private var textContentType: UITextContentType? {
+        switch fieldType {
+        case .phone: return .telephoneNumber
+        case .email: return .emailAddress
+        case .url: return .URL
+        default: return nil
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    HStack {
+                        Image(systemName: icon)
+                            .font(.title2)
+                            .foregroundStyle(color)
+                            .frame(width: 44, height: 44)
+                            .background(color.opacity(0.1))
+                            .clipShape(Circle())
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(label)
+                                .font(.headline)
+                            if let originalValue = originalValue, !originalValue.isEmpty, originalValue != value {
+                                Text("Modified")
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
+                            }
+                        }
+                    }
+                }
+
+                Section("Value") {
+                    if fieldType == .date {
+                        DatePicker(
+                            "Date",
+                            selection: $selectedDate,
+                            displayedComponents: .date
+                        )
+                        .datePickerStyle(.graphical)
+                        .onChange(of: selectedDate) { _, newDate in
+                            editedValue = formatDate(newDate)
+                        }
+                    } else {
+                        TextField("Enter value", text: $editedValue, axis: .vertical)
+                            .keyboardType(keyboardType)
+                            .textContentType(textContentType)
+                            .autocorrectionDisabled()
+                            .lineLimit(3...6)
+                    }
+                }
+
+                if let originalValue = originalValue, !originalValue.isEmpty, originalValue != value {
+                    Section("Original Value") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(originalValue)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .padding(.vertical, 4)
+
+                            Button {
+                                showResetConfirmation = true
+                            } label: {
+                                Label("Reset to Original", systemImage: "arrow.counterclockwise")
+                                    .foregroundStyle(.orange)
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Edit \(label)")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        onSave(editedValue)
+                        dismiss()
+                    }
+                    .disabled(editedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            .onAppear {
+                editedValue = value
+                if fieldType == .date {
+                    selectedDate = parseDate(value) ?? Date()
+                }
+            }
+            .alert("Reset to Original Value", isPresented: $showResetConfirmation) {
+                Button("Cancel", role: .cancel) { }
+                Button("Reset", role: .destructive) {
+                    onReset?()
+                    dismiss()
+                }
+            } message: {
+                if let originalValue = originalValue {
+                    Text("This will restore the original value:\n\n\"\(originalValue)\"")
+                }
+            }
+        }
+    }
+
+    private func parseDate(_ dateString: String) -> Date? {
+        let formatters = [
+            createFormatter("MM/dd/yyyy"),
+            createFormatter("MM-dd-yyyy"),
+            createFormatter("MMMM d, yyyy"),
+            createFormatter("d MMMM yyyy"),
+            createFormatter("MM/yy")
+        ]
+
+        for formatter in formatters {
+            if let date = formatter.date(from: dateString) {
+                return date
+            }
+        }
+        return nil
+    }
+
+    private func createFormatter(_ format: String) -> DateFormatter {
+        let formatter = DateFormatter()
+        formatter.dateFormat = format
+        return formatter
+    }
+
+    private func formatDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MM/dd/yyyy"
+        return formatter.string(from: date)
+    }
+}
+
+// MARK: - Edit OCR Text Sheet
+
+struct EditOCRTextSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
+    @Bindable var document: Document
+
+    @State private var editedText: String = ""
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                TextEditor(text: $editedText)
+                    .font(.system(.body, design: .monospaced))
+                    .padding()
+            }
+            .navigationTitle("Edit Text")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        document.ocrText = editedText
+                        try? modelContext.save()
+                        dismiss()
+                    }
+                }
+            }
+            .onAppear {
+                editedText = document.ocrText
+            }
+        }
     }
 }
 

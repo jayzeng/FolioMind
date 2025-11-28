@@ -70,6 +70,7 @@ final class Field {
     @Attribute(.unique) var id: UUID
     var key: String
     var value: String
+    @Attribute(.preserveValueOnDeletion) var originalValue: String = ""
     var confidence: Double
     var source: FieldSource
 
@@ -77,14 +78,26 @@ final class Field {
         id: UUID = UUID(),
         key: String,
         value: String,
+        originalValue: String? = nil,
         confidence: Double = 1.0,
         source: FieldSource = .fused
     ) {
         self.id = id
         self.key = key
         self.value = value
+        self.originalValue = originalValue ?? value
         self.confidence = confidence
         self.source = source
+    }
+
+    var isModified: Bool {
+        !originalValue.isEmpty && value != originalValue
+    }
+
+    func reset() {
+        if !originalValue.isEmpty {
+            value = originalValue
+        }
     }
 }
 
