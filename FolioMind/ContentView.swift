@@ -119,7 +119,6 @@ struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var services: AppServices
     @Query(sort: \Document.createdAt, order: .reverse) private var documents: [Document]
-    @State private var stubCounter: Int = 1
     @State private var searchText: String = ""
     @State private var searchResults: [SearchResult] = []
     @State private var isSearching: Bool = false
@@ -168,15 +167,6 @@ struct ContentView: View {
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
             .navigationTitle("FolioMind")
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    EditButton()
-                }
-                ToolbarItem {
-                    Button(action: addStubDocument) {
-                        Label("Add Document", systemImage: "plus")
-                    }
-                    .accessibilityIdentifier("addDocumentButton")
-                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     PhotosPicker(selection: $photoPickerItem, matching: .images) {
                         Label("Import", systemImage: "photo")
@@ -311,7 +301,7 @@ struct ContentView: View {
         ], spacing: 12) {
             ForEach(Array(documents.enumerated()), id: \.element.id) { index, document in
                 NavigationLink {
-                    DocumentDetailView(document: document)
+                    DocumentDetailViewRevamped(document: document)
                 } label: {
                     DocumentGridCard(
                         document: document,
@@ -337,18 +327,6 @@ struct ContentView: View {
             }
         }
         .padding(.bottom, 16)
-    }
-
-    private func addStubDocument() {
-        let titleSuffix = stubCounter
-        stubCounter += 1
-        Task {
-            do {
-                _ = try await services.documentStore.createStubDocument(in: modelContext, titleSuffix: titleSuffix)
-            } catch {
-                errorMessage = error.localizedDescription
-            }
-        }
     }
 
     @MainActor
