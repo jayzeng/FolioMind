@@ -128,6 +128,9 @@ struct ContentView: View {
     @State private var showScanner: Bool = false
     @State private var photoPickerItem: PhotosPickerItem?
     @State private var errorMessage: String?
+    @State private var documentToEdit: Document?
+    @State private var documentToDelete: Document?
+    @State private var showDeleteConfirmation: Bool = false
 
     private var scannerAvailable: Bool {
         DocumentScannerView.isAvailable
@@ -139,52 +142,30 @@ struct ContentView: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                if isSearching {
-                    ProgressView("Searching…")
-                }
+            ScrollView {
+                VStack(spacing: 0) {
+                    if isSearching || isImporting || isScanning {
+                        statusBanner
+                    }
 
-                if isImporting {
-                    Label("Importing document…", systemImage: "arrow.down.circle")
-                        .foregroundStyle(.secondary)
-                }
-
-                if isScanning {
-                    Label("Scanning document…", systemImage: "doc.viewfinder")
-                        .foregroundStyle(.secondary)
-                }
-
-                if showingSearchResults {
-                    if searchResults.isEmpty && !isSearching {
-                        Text("No results for \"\(searchText)\"")
-                            .foregroundStyle(.secondary)
+                    if showingSearchResults {
+                        if searchResults.isEmpty && !isSearching {
+                            emptySearchView
+                        } else {
+                            documentGrid(searchResults.map { $0.document }, scores: searchResults.map { $0.score })
+                        }
                     } else {
-                        ForEach(searchResults, id: \.document.id) { result in
-                            NavigationLink {
-                                DocumentDetailView(document: result.document)
-                            } label: {
-                                DocumentRow(document: result.document, score: result.score)
-                            }
-                        }
-                        .listRowSeparator(.hidden)
-                    }
-                } else {
-                    ForEach(documents, id: \.id) { document in
-                        NavigationLink {
-                            DocumentDetailView(document: document)
-                        } label: {
-                            DocumentRow(document: document, score: nil)
+                        if documents.isEmpty {
+                            emptyStateView
+                        } else {
+                            documentGrid(documents, scores: nil)
                         }
                     }
-                    .onDelete { offsets in
-                        services.documentStore.delete(at: offsets, from: documents, in: modelContext)
-                    }
-                    .listRowSeparator(.hidden)
                 }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
             }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
-            .background(Color(.systemGroupedBackground))
+            .background(Color(.systemGroupedBackground).ignoresSafeArea())
             .navigationTitle("FolioMind")
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -232,6 +213,25 @@ struct ContentView: View {
                     errorMessage = error.localizedDescription
                 }
             }
+            .sheet(item: $documentToEdit) { document in
+                NavigationStack {
+                    DocumentEditView(document: document)
+                }
+            }
+            .alert("Delete Document", isPresented: $showDeleteConfirmation, presenting: documentToDelete, actions: { document in
+                Button("Cancel", role: .cancel) {
+                    documentToDelete = nil
+                }
+                Button("Delete", role: .destructive) {
+                    if let doc = documentToDelete {
+                        modelContext.delete(doc)
+                        try? modelContext.save()
+                        documentToDelete = nil
+                    }
+                }
+            }, message: { document in
+                Text("Are you sure you want to delete \"\(document.title)\"? This action cannot be undone.")
+            })
             .alert("Error", isPresented: .constant(errorMessage != nil), actions: {
                 Button("OK") { errorMessage = nil }
             }, message: {
@@ -240,6 +240,103 @@ struct ContentView: View {
                 }
             })
         }
+    }
+
+    private var statusBanner: some View {
+        VStack(spacing: 8) {
+            if isSearching {
+                HStack {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                    Text("Searching…")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            if isImporting {
+                Label("Importing document…", systemImage: "arrow.down.circle")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            if isScanning {
+                Label("Scanning document…", systemImage: "doc.viewfinder")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .padding(.bottom, 12)
+    }
+
+    private var emptySearchView: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 48))
+                .foregroundStyle(.secondary)
+            Text("No results for \"\(searchText)\"")
+                .font(.headline)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 60)
+    }
+
+    private var emptyStateView: some View {
+        VStack(spacing: 20) {
+            Image(systemName: "tray")
+                .font(.system(size: 64))
+                .foregroundStyle(.secondary)
+            VStack(spacing: 8) {
+                Text("No Documents")
+                    .font(.title2.weight(.semibold))
+                Text("Import or scan documents to get started")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 80)
+    }
+
+    @ViewBuilder
+    private func documentGrid(_ documents: [Document], scores: [SearchScoreComponents]?) -> some View {
+        LazyVGrid(columns: [
+            GridItem(.flexible(), spacing: 12),
+            GridItem(.flexible(), spacing: 12),
+            GridItem(.flexible(), spacing: 12)
+        ], spacing: 12) {
+            ForEach(Array(documents.enumerated()), id: \.element.id) { index, document in
+                NavigationLink {
+                    DocumentDetailView(document: document)
+                } label: {
+                    DocumentGridCard(
+                        document: document,
+                        score: scores?[safe: index]
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+                .contextMenu {
+                    Button {
+                        editDocument(document)
+                    } label: {
+                        Label("Edit", systemImage: "pencil")
+                    }
+
+                    Divider()
+
+                    Button(role: .destructive) {
+                        deleteDocument(document)
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                    }
+                }
+            }
+        }
+        .padding(.bottom, 16)
     }
 
     private func addStubDocument() {
@@ -297,6 +394,15 @@ struct ContentView: View {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func editDocument(_ document: Document) {
+        documentToEdit = document
+    }
+
+    private func deleteDocument(_ document: Document) {
+        documentToDelete = document
+        showDeleteConfirmation = true
     }
 
     @MainActor
