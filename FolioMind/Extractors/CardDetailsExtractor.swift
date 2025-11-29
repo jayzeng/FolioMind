@@ -45,14 +45,21 @@ enum CardDetailsExtractor {
     // MARK: - PAN Extraction
 
     private static func extractPan(from text: String) -> String? {
+        // Search line by line to avoid concatenating numbers from different lines
+        let lines = text.components(separatedBy: .newlines)
         let pattern = "(?:\\d[\\s-]?){13,19}"
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
 
-        let matches = regex.matches(in: text, range: NSRange(location: 0, length: text.utf16.count))
-        let candidates = matches.compactMap { match -> String? in
-            guard let range = Range(match.range, in: text) else { return nil }
-            let digits = String(text[range]).filter(\.isWholeNumber)
-            return (13...19).contains(digits.count) ? digits : nil
+        var candidates: [String] = []
+        for line in lines {
+            let matches = regex.matches(in: line, range: NSRange(location: 0, length: line.utf16.count))
+            for match in matches {
+                guard let range = Range(match.range, in: line) else { continue }
+                let digits = String(line[range]).filter(\.isWholeNumber)
+                if (13...19).contains(digits.count) {
+                    candidates.append(digits)
+                }
+            }
         }
 
         // Prefer Luhn-valid PAN, fallback to longest
@@ -159,10 +166,11 @@ enum CardDetailsExtractor {
             "td", "pnc", "barclays", "santander"
         ]
 
-        // Check for known issuers in full text
+        // Check for known issuers in full text - prefer longer matches
         let lowerText = fullText.lowercased()
-        if let match = knownIssuers.first(where: { lowerText.contains($0) }) {
-            return match.capitalized
+        let matches = knownIssuers.filter { lowerText.contains($0) }
+        if let longestMatch = matches.max(by: { $0.count < $1.count }) {
+            return longestMatch.capitalized
         }
 
         // Look for banking-related terms in lines
