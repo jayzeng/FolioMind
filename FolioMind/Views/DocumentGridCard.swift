@@ -11,6 +11,15 @@ struct DocumentGridCard: View {
     let document: Document
     let score: SearchScoreComponents?
 
+    // Cache critical properties to prevent crashes when document is deleted
+    @State private var cachedDocType: DocumentType?
+    @State private var cachedTitle: String = ""
+    @State private var cachedDate: Date?
+
+    private var safeDocType: DocumentType {
+        cachedDocType ?? .generic
+    }
+
     private var imageURL: URL? {
         guard let assetURLString = document.assetURL else { return nil }
         return URL(fileURLWithPath: assetURLString)
@@ -22,14 +31,14 @@ struct DocumentGridCard: View {
     }
 
     private var relativeTime: String {
-        let date = document.capturedAt ?? document.createdAt
+        let date = cachedDate ?? Date()
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .abbreviated
         return formatter.localizedString(for: date, relativeTo: Date())
     }
 
     private var keyInfo: String? {
-        switch document.docType {
+        switch safeDocType {
         case .creditCard:
             let details = CardDetailsExtractor.extract(ocrText: document.ocrText, fields: document.fields)
             if let holder = details.holder, let issuer = details.issuer {
@@ -85,7 +94,7 @@ struct DocumentGridCard: View {
 
                     // Document type badge
                     PillBadge(
-                        text: document.docType.displayName,
+                        text: safeDocType.displayName,
                         icon: nil,
                         tint: .white
                     )
@@ -100,17 +109,17 @@ struct DocumentGridCard: View {
                 // Placeholder with gradient
                 ZStack(alignment: .topTrailing) {
                     Rectangle()
-                        .fill(document.docType.accentGradient)
+                        .fill(safeDocType.accentGradient)
                         .frame(height: 140)
                         .overlay(
-                            Image(systemName: document.docType.symbolName)
+                            Image(systemName: safeDocType.symbolName)
                                 .font(.system(size: 36))
                                 .foregroundStyle(.white.opacity(0.3))
                         )
 
                     // Document type badge
                     PillBadge(
-                        text: document.docType.displayName,
+                        text: safeDocType.displayName,
                         icon: nil,
                         tint: .white
                     )
@@ -133,7 +142,7 @@ struct DocumentGridCard: View {
                         .lineLimit(2)
                         .multilineTextAlignment(.leading)
                 } else {
-                    Text(document.title)
+                    Text(cachedTitle)
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.primary)
                         .lineLimit(2)
@@ -167,6 +176,20 @@ struct DocumentGridCard: View {
         .background(Color(.secondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .shadow(color: .black.opacity(0.05), radius: 2, x: 0, y: 1)
+        .onAppear {
+            // Cache values on appear to prevent crashes when document is deleted
+            updateCachedValues()
+        }
+        .task(id: document.id) {
+            // Update cached values when document changes
+            updateCachedValues()
+        }
+    }
+
+    private func updateCachedValues() {
+        cachedDocType = document.docType
+        cachedTitle = document.title
+        cachedDate = document.capturedAt ?? document.createdAt
     }
 
     private func loadImage(from url: URL) -> UIImage? {

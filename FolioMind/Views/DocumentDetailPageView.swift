@@ -11,6 +11,7 @@ import PhotosUI
 struct DocumentDetailPageView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var services: AppServices
     @Bindable var document: Document
     var reminderManager: ReminderManager?
 
@@ -28,6 +29,8 @@ struct DocumentDetailPageView: View {
     @State private var selectedPhotos: [PhotosPickerItem] = []  // For adding new assets
     @State private var isDeleting: Bool = false  // Prevent accessing document during deletion
     @State private var cachedDocType: DocumentType?  // Cache docType to prevent access after deletion
+    @State private var isReextracting: Bool = false
+    @State private var reextractError: String?
 
     enum DetailTab: String, CaseIterable {
         case overview = "Overview"
@@ -75,6 +78,12 @@ struct DocumentDetailPageView: View {
                 // Tab Selector
                 tabSelector
 
+                if isReextracting {
+                    reextractingBanner
+                        .padding(.horizontal, 16)
+                        .padding(.top, 8)
+                }
+
                 // Content based on selected tab
                 TabView(selection: $selectedTab) {
                     overviewTab
@@ -115,6 +124,15 @@ struct DocumentDetailPageView: View {
                     }
 
                     Button {
+                        Task {
+                            await reextractDocument()
+                        }
+                    } label: {
+                        Label("Re-run Extraction", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                    .disabled(isReextracting)
+
+                    Button {
                         shareDocument()
                     } label: {
                         Label("Share", systemImage: "square.and.arrow.up")
@@ -150,6 +168,15 @@ struct DocumentDetailPageView: View {
         } message: {
             Text("Are you sure you want to delete \"\(document.title)\"? This action cannot be undone.")
         }
+        .alert("Re-extraction Failed", isPresented: .constant(reextractError != nil), actions: {
+            Button("OK") {
+                reextractError = nil
+            }
+        }, message: {
+            if let reextractError {
+                Text(reextractError)
+            }
+        })
         .onAppear {
             // Cache docType to prevent crashes when accessing after deletion
             cachedDocType = document.docType
@@ -837,6 +864,17 @@ struct DocumentDetailPageView: View {
 
     // MARK: - Helper Properties
 
+    private var reextractingBanner: some View {
+        HStack(spacing: 10) {
+            ProgressView()
+                .scaleEffect(0.8)
+            Text("Re-running extraction…")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private var relativeTime: String {
         let date = document.capturedAt ?? document.createdAt
         let formatter = RelativeDateTimeFormatter()
@@ -876,6 +914,19 @@ struct DocumentDetailPageView: View {
         // Reset after delay
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
             copiedField = nil
+        }
+    }
+
+    private func reextractDocument() async {
+        guard !isReextracting else { return }
+        isReextracting = true
+        defer { isReextracting = false }
+
+        do {
+            _ = try await services.documentStore.reextract(document: document, in: modelContext)
+            cachedDocType = document.docType
+        } catch {
+            reextractError = error.localizedDescription
         }
     }
 

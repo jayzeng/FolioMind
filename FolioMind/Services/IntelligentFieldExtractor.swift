@@ -534,10 +534,10 @@ final class IntelligentFieldExtractor {
     private func extractInsuranceFields(from text: String) -> [Field] {
         var fields: [Field] = []
 
-        // Extract member ID (handles formats like "W2966 43427", "ABC123456", etc.)
+        // Extract member ID (handles formats like "ID W2966", "Member ID 1234", "Subscriber# ABC123456", etc.)
         let memberIDPatterns = [
-            "\\bID[:\\\\s#]+([A-Z0-9][A-Z0-9\\\\s-]{3,20}?)(?=\\\\s*\\\\n|\\\\s{2,}|$)",
-            "(?:member|subscriber)\\\\s*(?:id|ID|#)[:\\\\s#]*([A-Z0-9][A-Z0-9\\\\s-]{3,20}?)(?=\\\\s*\\\\n|\\\\s{2,}|$)"
+            "\\bID[:\\s#]+([A-Z0-9][A-Z0-9\\s-]{3,20}?)(?=\\s*\\n|\\s{2,}|$)",
+            "(?:member|subscriber)\\s*(?:id|#)?[:\\s#]*([A-Z0-9][A-Z0-9\\s-]{3,20}?)(?=\\s*\\n|\\s{2,}|$)"
         ]
 
         for pattern in memberIDPatterns {
@@ -557,8 +557,8 @@ final class IntelligentFieldExtractor {
 
         // Extract group number (handles "Den Grp #:", "Group:", etc.)
         let groupPatterns = [
-            "(?:den(?:tal)?\\\\s+)?(?:group|grp)[:\\\\s#]+([A-Z0-9][A-Z0-9\\\\s-]{3,25}?)(?=\\\\s*\\\\n|\\\\s{2,}|$)",
-            "\\bgrp[:\\\\s#]+([A-Z0-9][A-Z0-9\\\\s-]{3,25}?)(?=\\\\s*\\\\n|\\\\s{2,}|$)"
+            "(?:den(?:tal)?\\s+)?(?:group|grp)[:\\s#]+([A-Z0-9][A-Z0-9\\s-]{3,25}?)(?=\\s*\\n|\\s{2,}|$)",
+            "\\bgrp#?[:\\s#]*([A-Z0-9][A-Z0-9\\s-]{3,25}?)(?=\\s*\\n|\\s{2,}|$)"
         ]
 
         for pattern in groupPatterns {
@@ -577,7 +577,7 @@ final class IntelligentFieldExtractor {
         }
 
         // Extract payer number (new field for dental/medical cards)
-        let payerPattern = "payer[:\\\\s#]+([A-Z0-9][A-Z0-9\\\\s-]{3,25}?)(?=\\\\s*\\\\n|\\\\s{2,}|$)"
+        let payerPattern = "payer[:\\s#]+([A-Z0-9][A-Z0-9\\s-]{3,25}?)(?=\\s*\\n|\\s{2,}|$)"
         if let regex = try? NSRegularExpression(pattern: payerPattern, options: .caseInsensitive),
            let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
            let range = Range(match.range(at: 1), in: text) {
@@ -591,7 +591,7 @@ final class IntelligentFieldExtractor {
         }
 
         // Extract insurer name from known list
-        let insurers = ["aetna", "cvs health", "cigna", "unitedhealthcare", "anthem", "blue cross", "blue shield", "kaiser", "humana"]
+        let insurers = ["aetna", "cvs health", "cvshealth", "cigna", "unitedhealthcare", "anthem", "blue cross", "blue shield", "kaiser", "humana"]
         let lower = text.lowercased()
         if let match = insurers.first(where: { lower.contains($0) }) {
             fields.append(Field(
@@ -603,7 +603,14 @@ final class IntelligentFieldExtractor {
         }
 
         // Extract plan name - prioritize specific plan types over generic terms
-        let lines = text.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        let bulletTrimSet = CharacterSet(charactersIn: "•*·-").union(.punctuationCharacters).union(.whitespaces)
+        let lines = text
+            .components(separatedBy: .newlines)
+            .map { line in
+                line
+                    .trimmingCharacters(in: bulletTrimSet)
+            }
+            .filter { !$0.isEmpty }
 
         // Look for lines with specific plan keywords, prioritizing actual plan types
         let planCandidates = lines.filter { line in
@@ -615,10 +622,10 @@ final class IntelligentFieldExtractor {
                 && !lower.contains("advocate") // Exclude service names
                 && !lower.contains("see your plan") // Exclude instructions
                 && !lower.contains("www.") // Exclude URLs
-                && line.count < 50 // Reasonable plan name length
+                && line.count < 60 // Reasonable plan name length
         }
 
-        // Prefer shorter, more specific plan names
+        // Prefer shortest relevant plan, fall back to the line following insurer if present
         if let plan = planCandidates.min(by: { $0.count < $1.count }) {
             fields.append(Field(
                 key: "plan_name",
@@ -626,12 +633,25 @@ final class IntelligentFieldExtractor {
                 confidence: 0.82,
                 source: .vision
             ))
+        } else {
+            if let insurerLineIndex = lines.firstIndex(where: { $0.lowercased().contains("aetna") || $0.lowercased().contains("cvs health") }),
+               lines.indices.contains(insurerLineIndex + 1) {
+                let candidate = lines[insurerLineIndex + 1]
+                if candidate.lowercased().contains("ppo") || candidate.lowercased().contains("dental") {
+                    fields.append(Field(
+                        key: "plan_name",
+                        value: candidate,
+                        confidence: 0.7,
+                        source: .vision
+                    ))
+                }
+            }
         }
 
         // Extract member names listed with numeric prefixes
-        // Handles both "01 JAY ZENG" (all caps) and "01. Jay Zeng" (title case)
-        let namePattern = #"^\d{1,2}\.?\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)+)"#
-        let nameRegex = try? NSRegularExpression(pattern: namePattern, options: .anchorsMatchLines)
+        // Handles "01 JAY ZENG" (all caps) or "01. Jay Zeng" (title case)
+        let namePattern = #"^\s*\d{1,2}\.?\s+([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)+|[A-Z]{2,}(?:\s+[A-Z]{2,})+)"#
+        let nameRegex = try? NSRegularExpression(pattern: namePattern, options: [.anchorsMatchLines])
         var enumeratedNames: [String] = []
         if let nameRegex {
             let matches = nameRegex.matches(in: text, range: NSRange(text.startIndex..., in: text))
@@ -653,6 +673,17 @@ final class IntelligentFieldExtractor {
                 key: "member_name",
                 value: combined,
                 confidence: enumeratedNames.count > 1 ? 0.82 : 0.78, // Higher confidence for multiple members
+                source: .vision
+            ))
+        }
+
+        // If we captured a payer number but no insurer, map payer as insurance company fallback
+        if fields.first(where: { $0.key == "insurance_company" }) == nil,
+           let payer = fields.first(where: { $0.key == "payer_number" })?.value {
+            fields.append(Field(
+                key: "insurance_company",
+                value: payer,
+                confidence: 0.6,
                 source: .vision
             ))
         }

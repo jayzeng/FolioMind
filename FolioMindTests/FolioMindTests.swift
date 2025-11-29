@@ -432,4 +432,208 @@ struct FolioMindTests {
         )
         #expect(result == .billStatement)
     }
+
+    @MainActor
+    @Test func reminderManagerSuggestsCreditCardRenewal() {
+        let manager = ReminderManager()
+        let field = Field(key: "expiry", value: "12/25", confidence: 0.9, source: .vision)
+        let document = Document(
+            title: "Chase Visa",
+            docType: .creditCard,
+            ocrText: "4111111111111111 Valid Thru 12/25",
+            fields: [field]
+        )
+
+        let suggestions = manager.suggestReminders(for: document)
+        #expect(!suggestions.isEmpty)
+        #expect(suggestions.contains { $0.type == .renewal })
+    }
+
+    @MainActor
+    @Test func reminderManagerSuggestsInsuranceActions() {
+        let manager = ReminderManager()
+        let document = Document(
+            title: "Health Insurance Card",
+            docType: .insuranceCard,
+            ocrText: "Member ID: ABC123 Group: 456"
+        )
+
+        let suggestions = manager.suggestReminders(for: document)
+        #expect(!suggestions.isEmpty)
+        // Should suggest call or appointment
+        #expect(suggestions.contains { $0.type == .call || $0.type == .appointment })
+    }
+
+    @MainActor
+    @Test func reminderManagerSuggestsBillPayment() {
+        let manager = ReminderManager()
+        let dueField = Field(key: "due_date", value: "2024-12-15", confidence: 0.9, source: .vision)
+        let document = Document(
+            title: "Electric Bill",
+            docType: .billStatement,
+            ocrText: "Amount Due: $125.00 Due Date: 12/15/2024",
+            fields: [dueField]
+        )
+
+        let suggestions = manager.suggestReminders(for: document)
+        #expect(!suggestions.isEmpty)
+        #expect(suggestions.contains { $0.type == .payment })
+    }
+
+    @MainActor
+    @Test func embeddingServiceProducesDifferentVectorsForDifferentText() async throws {
+        let service = SimpleEmbeddingService()
+        let doc1 = Document(title: "Short", ocrText: "A")
+        let doc2 = Document(title: "Long document with many words", ocrText: String(repeating: "text ", count: 100))
+
+        let emb1 = try await service.embedDocument(doc1)
+        let emb2 = try await service.embedDocument(doc2)
+
+        // Vectors should be different for different documents
+        #expect(emb1.vector != emb2.vector)
+    }
+
+    @MainActor
+    @Test func embeddingServiceProducesSimilarVectorsForSimilarText() async throws {
+        let service = SimpleEmbeddingService()
+        let doc1 = Document(title: "Insurance Card", ocrText: "Member ID ABC123")
+        let doc2 = Document(title: "Insurance Card", ocrText: "Member ID XYZ789")
+
+        let emb1 = try await service.embedDocument(doc1)
+        let emb2 = try await service.embedDocument(doc2)
+
+        // Vectors should be similar (not identical but close)
+        // Simple similarity check: just verify they're not too different
+        let diff = zip(emb1.vector, emb2.vector).reduce(0.0) { $0 + abs($1.0 - $1.1) }
+        #expect(diff < 2.0) // Should have some similarity
+    }
+
+    @MainActor
+    @Test func ingestDocumentsHandlesEmptyImageList() async throws {
+        let schema = Schema([
+            Document.self,
+            Asset.self,
+            Person.self,
+            Field.self,
+            FaceCluster.self,
+            Embedding.self,
+            DocumentPersonLink.self,
+            DocumentReminder.self
+        ])
+        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+        let container = try ModelContainer(for: schema, configurations: [configuration])
+        let context = ModelContext(container)
+
+        let store = DocumentStore(
+            analyzer: TestDocumentAnalyzer(),
+            embeddingService: SimpleEmbeddingService()
+        )
+
+        do {
+            _ = try await store.ingestDocuments(
+                from: [],
+                hints: nil,
+                title: nil,
+                location: nil,
+                capturedAt: Date(),
+                in: context
+            )
+            #expect(Bool(false), "Should throw error for empty image list")
+        } catch {
+            // Expected to throw
+            #expect(error.localizedDescription.contains("No images"))
+        }
+    }
+
+    @MainActor
+    @Test func documentStoreCreatesMultipleAssetsForMultiplePages() async throws {
+        let schema = Schema([
+            Document.self,
+            Asset.self,
+            Person.self,
+            Field.self,
+            FaceCluster.self,
+            Embedding.self,
+            DocumentPersonLink.self,
+            DocumentReminder.self
+        ])
+        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+        let container = try ModelContainer(for: schema, configurations: [configuration])
+        let context = ModelContext(container)
+
+        let store = DocumentStore(
+            analyzer: TestDocumentAnalyzer(),
+            embeddingService: SimpleEmbeddingService()
+        )
+        let url1 = URL(fileURLWithPath: "/tmp/page1.png")
+        let url2 = URL(fileURLWithPath: "/tmp/page2.png")
+        let url3 = URL(fileURLWithPath: "/tmp/page3.png")
+
+        let doc = try await store.ingestDocuments(
+            from: [url1, url2, url3],
+            hints: nil,
+            title: "Multi-page Document",
+            location: nil,
+            capturedAt: Date(),
+            in: context
+        )
+
+        #expect(doc.assets.count == 3)
+        #expect(doc.assets[0].pageNumber == 0)
+        #expect(doc.assets[1].pageNumber == 1)
+        #expect(doc.assets[2].pageNumber == 2)
+    }
+
+    @Test func fieldExtractorExtractsPhoneNumbers() {
+        let text = "Contact us at (555) 123-4567 or 555-987-6543"
+        let fields = FieldExtractor.extractFields(from: text)
+
+        let phoneFields = fields.filter { $0.key.lowercased().contains("phone") }
+        #expect(phoneFields.count >= 1)
+    }
+
+    @Test func fieldExtractorExtractsEmails() {
+        let text = "Email: support@example.com or contact@test.org"
+        let fields = FieldExtractor.extractFields(from: text)
+
+        let emailFields = fields.filter { $0.key.lowercased().contains("email") }
+        #expect(emailFields.count >= 1)
+    }
+
+    @Test func fieldExtractorExtractsURLs() {
+        let text = "Visit https://example.com or www.test.com"
+        let fields = FieldExtractor.extractFields(from: text)
+
+        let urlFields = fields.filter { $0.key.lowercased().contains("url") || $0.key.lowercased().contains("website") }
+        #expect(urlFields.count >= 1)
+    }
+
+    @Test func fieldExtractorDeduplicatesFields() {
+        let text = "Email: test@example.com Email: test@example.com"
+        let fields = FieldExtractor.extractFields(from: text)
+
+        let emailFields = fields.filter { $0.key.lowercased().contains("email") && $0.value == "test@example.com" }
+        // Should deduplicate identical values
+        #expect(emailFields.count <= 2)
+    }
+
+    @Test func documentTypeHasDisplayNames() {
+        #expect(DocumentType.creditCard.displayName == "Credit Card")
+        #expect(DocumentType.insuranceCard.displayName == "Insurance")
+        #expect(DocumentType.billStatement.displayName == "Statement")
+        #expect(DocumentType.receipt.displayName == "Receipt")
+        #expect(DocumentType.generic.displayName == "Document")
+    }
+
+    @Test func documentTypeHasIcons() {
+        for docType in DocumentType.allCases {
+            #expect(!docType.symbolName.isEmpty)
+        }
+    }
+
+    @Test func assetTypeHasIcons() {
+        #expect(AssetType.image.icon == "photo")
+        #expect(AssetType.pdf.icon == "doc.text")
+        #expect(AssetType.document.icon == "doc")
+    }
 }

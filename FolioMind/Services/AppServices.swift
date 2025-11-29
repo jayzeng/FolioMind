@@ -56,18 +56,44 @@ final class AppServices: ObservableObject {
         }
 
         // Initialize intelligent field extractor with LLM
-        // Try Apple Intelligence first, fall back to OpenAI if not available
-        var llmService = LLMServiceFactory.create(type: .apple)
+        // Try Apple Intelligence first, fall back to OpenAI if configured
+        var llmService: LLMService? = nil
 
-        // Fallback to OpenAI if Apple Intelligence is not available
-        // TODO: Replace with your actual OpenAI API key or make this configurable
+        // Check user preferences
+        let useAppleIntelligence = UserDefaults.standard.bool(forKey: "use_apple_intelligence")
+        let useOpenAIFallback = UserDefaults.standard.bool(forKey: "use_openai_fallback")
+
+        // Set defaults on first launch
+        if !UserDefaults.standard.bool(forKey: "has_launched_before") {
+            UserDefaults.standard.set(true, forKey: "use_apple_intelligence")
+            UserDefaults.standard.set(true, forKey: "use_openai_fallback")
+            UserDefaults.standard.set(true, forKey: "has_launched_before")
+        }
+
+        // Try Apple Intelligence if enabled and available
+        if useAppleIntelligence {
+            llmService = LLMServiceFactory.create(type: .apple)
+            if llmService != nil {
+                print("✅ Apple Intelligence available for intelligent field extraction")
+            }
+        }
+
+        // Fallback to OpenAI if enabled and API key is configured
+        if llmService == nil && useOpenAIFallback {
+            if let apiKey = UserDefaults.standard.string(forKey: "openai_api_key"), !apiKey.isEmpty {
+                llmService = LLMServiceFactory.create(type: .openai(apiKey: apiKey))
+                print("✅ Using OpenAI for intelligent field extraction")
+            } else {
+                print("⚠️ OpenAI fallback enabled but no API key configured.")
+                print("💡 Add your API key in Settings to enable OpenAI intelligent extraction.")
+            }
+        }
+
         if llmService == nil {
-            // Uncomment and add your API key to enable OpenAI fallback:
-            llmService = LLMServiceFactory.create(type: .openai(apiKey: "OPENAI_API_KEY_REMOVED"))
-            print("⚠️ Apple Intelligence not available. Using pattern-based extraction only.")
-            print("💡 To enable intelligent extraction, add OpenAI API key or use iOS 18.2+ with Apple Intelligence enabled.")
-        } else {
-            print("✅ Apple Intelligence available for intelligent field extraction")
+            print("ℹ️ No LLM service available. Using pattern-based extraction only.")
+            print("💡 To enable intelligent extraction:")
+            print("   • Use iOS 18.2+ with Apple Intelligence, or")
+            print("   • Add OpenAI API key in Settings")
         }
 
         let intelligentExtractor = IntelligentFieldExtractor(
@@ -96,6 +122,17 @@ final class AppServices: ObservableObject {
 
 @MainActor
 final class DocumentStore {
+    enum StoreError: LocalizedError {
+        case noAssets
+
+        var errorDescription: String? {
+            switch self {
+            case .noAssets:
+                return "This document has no images to re-extract from."
+            }
+        }
+    }
+
     private let analyzer: DocumentAnalyzer
     private let embeddingService: EmbeddingService
     private let llmService: LLMService?
@@ -209,6 +246,78 @@ final class DocumentStore {
         let embedding = try await embeddingService.embedDocument(document)
         context.insert(embedding)
         document.embedding = embedding
+        try context.save()
+        return document
+    }
+
+    /// Re-run extraction for an existing document using its current image assets.
+    func reextract(
+        document: Document,
+        in context: ModelContext
+    ) async throws -> Document {
+        let imageAssets = document.imageAssets
+        guard !imageAssets.isEmpty else {
+            throw StoreError.noAssets
+        }
+
+        var analyses: [DocumentAnalysisResult] = []
+        for asset in imageAssets {
+            let url = URL(fileURLWithPath: asset.fileURL)
+            let analysis = try await analyzer.analyze(
+                imageURL: url,
+                hints: DocumentHints(
+                    suggestedType: document.docType,
+                    personName: nil
+                )
+            )
+            analyses.append(analysis)
+        }
+
+        let combinedOCR = analyses.map(\.ocrText).joined(separator: "\n\n")
+        let combinedFields = analyses.flatMap(\.fields)
+        let combinedFaces = analyses.flatMap(\.faceClusters)
+        let faceIDs = combinedFaces.map { $0.id }
+
+        let docType = DocumentTypeClassifier.classify(
+            ocrText: combinedOCR,
+            fields: combinedFields,
+            hinted: document.docType,
+            defaultType: document.docType
+        )
+
+        var cleanedText: String? = nil
+        if let llmService = llmService, !combinedOCR.isEmpty {
+            do {
+                cleanedText = try await llmService.cleanText(combinedOCR)
+            } catch {
+                print("Text cleaning failed during re-extraction: \(error.localizedDescription)")
+            }
+        }
+
+        // Replace existing fields to avoid stale SwiftData objects
+        document.fields.forEach { context.delete($0) }
+        document.fields.removeAll()
+        combinedFields.forEach { context.insert($0) }
+        combinedFaces.forEach { context.insert($0) }
+
+        document.docType = docType
+        document.ocrText = combinedOCR
+        document.cleanedText = cleanedText
+        document.fields = combinedFields
+        document.faceClusterIDs = faceIDs
+
+        // Update embedding in place if present
+        let freshEmbedding = try await embeddingService.embedDocument(document)
+        if let existingEmbedding = document.embedding {
+            existingEmbedding.vector = freshEmbedding.vector
+            existingEmbedding.source = freshEmbedding.source
+            existingEmbedding.entityType = freshEmbedding.entityType
+            existingEmbedding.entityID = freshEmbedding.entityID
+        } else {
+            context.insert(freshEmbedding)
+            document.embedding = freshEmbedding
+        }
+
         try context.save()
         return document
     }

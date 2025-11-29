@@ -130,6 +130,7 @@ struct ContentView: View {
     @State private var documentToEdit: Document?
     @State private var documentToDelete: Document?
     @State private var showDeleteConfirmation: Bool = false
+    @State private var showSettings: Bool = false
 
     private var scannerAvailable: Bool {
         DocumentScannerView.isAvailable
@@ -167,6 +168,14 @@ struct ContentView: View {
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
             .navigationTitle("FolioMind")
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button {
+                        showSettings = true
+                    } label: {
+                        Label("Settings", systemImage: "gearshape")
+                    }
+                }
+
                 ToolbarItem(placement: .navigationBarTrailing) {
                     PhotosPicker(selection: $photoPickerItem, matching: .images) {
                         Label("Import", systemImage: "photo")
@@ -203,6 +212,9 @@ struct ContentView: View {
                     errorMessage = error.localizedDescription
                 }
             }
+            .sheet(isPresented: $showSettings) {
+                SettingsView()
+            }
             .sheet(item: $documentToEdit) { document in
                 NavigationStack {
                     DocumentEditView(document: document)
@@ -213,11 +225,7 @@ struct ContentView: View {
                     documentToDelete = nil
                 }
                 Button("Delete", role: .destructive) {
-                    if let doc = documentToDelete {
-                        modelContext.delete(doc)
-                        try? modelContext.save()
-                        documentToDelete = nil
-                    }
+                    performDeletion()
                 }
             }, message: { document in
                 Text("Are you sure you want to delete \"\(document.title)\"? This action cannot be undone.")
@@ -381,6 +389,18 @@ struct ContentView: View {
     private func deleteDocument(_ document: Document) {
         documentToDelete = document
         showDeleteConfirmation = true
+    }
+
+    private func performDeletion() {
+        guard let doc = documentToDelete else { return }
+
+        // Delay deletion slightly to let SwiftUI finish any in-flight rendering
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
+            modelContext.delete(doc)
+            try? modelContext.save()
+            documentToDelete = nil
+        }
     }
 
     @MainActor

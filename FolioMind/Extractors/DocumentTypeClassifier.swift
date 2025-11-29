@@ -27,8 +27,8 @@ struct DocumentTypeClassifier {
         let letterHit = isLetter(text: haystack)
 
         let result: DocumentType
-        if creditHit { result = .creditCard }
-        else if insuranceHit { result = .insuranceCard }
+        if insuranceHit { result = .insuranceCard }
+        else if creditHit { result = .creditCard }
         else if billHit { result = .billStatement }
         else if letterHit { result = .letter }
         else { result = defaultType }
@@ -59,15 +59,20 @@ struct DocumentTypeClassifier {
         let hasLongNumber = allCandidates.contains { (13...19).contains($0.count) }
         let hasExpiry = hasExpiryPattern(in: text) || fieldValues.contains { hasExpiryPattern(in: $0) }
         let cardKey = fieldKeys.contains { $0.contains("card") || $0.contains("pan") }
+        let hasCardContext = hasKeyword || hasExpiry || cardKey
 
-        if hasValidPan { return true }
-        if (hasKeyword || hasExpiry || cardKey) && hasLongNumber { return true }
+        // Require card context to avoid misclassifying long IDs as card numbers
+        if hasValidPan && hasCardContext { return true }
+        if hasCardContext && hasLongNumber { return true }
         return false
     }
 
     private static func isInsuranceCard(text: String, fields: [String]) -> Bool {
-        let patterns = ["insurance", "member id", "policy", "group", "payer", "provider", "rxbin", "rxgrp"]
-        let fieldHints = ["member_name", "policy_number", "group_number", "rx_bin", "rx_grp"]
+        let patterns = [
+            "insurance", "member id", "policy", "group", "payer", "provider",
+            "rxbin", "rxgrp", "rx bin", "rx pcn", "dental", "ppo", "hmo", "vision", "den grp"
+        ]
+        let fieldHints = ["member_name", "policy_number", "group_number", "rx_bin", "rx_grp", "payer_number", "plan_name"]
         let hasKeyword = patterns.contains { text.contains($0) }
         let hasField = fields.contains { fieldHints.contains($0) }
         return hasKeyword || hasField
