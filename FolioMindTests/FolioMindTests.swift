@@ -95,6 +95,7 @@ struct FolioMindTests {
     @Test func documentStoreCreatesStubAndEmbedding() async throws {
         let schema = Schema([
             Document.self,
+            Asset.self,
             Person.self,
             Field.self,
             FaceCluster.self,
@@ -124,6 +125,7 @@ struct FolioMindTests {
     @Test func searchEngineMatchesTitle() async throws {
         let schema = Schema([
             Document.self,
+            Asset.self,
             Person.self,
             Field.self,
             FaceCluster.self,
@@ -150,6 +152,7 @@ struct FolioMindTests {
     @Test func hybridSearchRanksByKeywordAndSemantic() async throws {
         let schema = Schema([
             Document.self,
+            Asset.self,
             Person.self,
             Field.self,
             FaceCluster.self,
@@ -197,6 +200,7 @@ struct FolioMindTests {
     @Test func ingestDocumentsMergesOCRAcrossPages() async throws {
         let schema = Schema([
             Document.self,
+            Asset.self,
             Person.self,
             Field.self,
             FaceCluster.self,

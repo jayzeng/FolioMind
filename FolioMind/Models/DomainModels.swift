@@ -25,6 +25,20 @@ enum FieldSource: String, Codable, CaseIterable {
     case fused
 }
 
+enum AssetType: String, Codable, CaseIterable {
+    case image
+    case pdf
+    case document
+
+    var icon: String {
+        switch self {
+        case .image: return "photo"
+        case .pdf: return "doc.text"
+        case .document: return "doc"
+        }
+    }
+}
+
 enum DocumentRelationship: String, Codable, CaseIterable {
     case owner
     case dependent
@@ -217,17 +231,52 @@ final class DocumentReminder {
     }
 }
 
+// MARK: - Asset Model
+
+/// Represents a single file/image asset belonging to a document
+@Model
+final class Asset {
+    @Attribute(.unique) var id: UUID
+    var fileURL: String  // Local file path
+    var assetType: AssetType
+    var addedAt: Date
+    var pageNumber: Int  // Order/page number within the document
+    var thumbnailURL: String?  // Optional thumbnail for quick preview
+
+    // Relationship
+    var document: Document?
+
+    init(
+        id: UUID = UUID(),
+        fileURL: String,
+        assetType: AssetType,
+        addedAt: Date = Date(),
+        pageNumber: Int = 0,
+        thumbnailURL: String? = nil
+    ) {
+        self.id = id
+        self.fileURL = fileURL
+        self.assetType = assetType
+        self.addedAt = addedAt
+        self.pageNumber = pageNumber
+        self.thumbnailURL = thumbnailURL
+    }
+}
+
+// MARK: - Document Model
+
 @Model
 final class Document {
     @Attribute(.unique) var id: UUID
     var title: String
     var docType: DocumentType
     var ocrText: String
+    var cleanedText: String?  // LLM-cleaned version of OCR text for better readability
     var fields: [Field]
     var createdAt: Date
     var capturedAt: Date?
     var location: String?
-    var assetURL: String?
+    var assets: [Asset]  // Multiple images/files belonging to this document
     var personLinks: [DocumentPersonLink]
     var faceClusterIDs: [UUID]
     var embedding: Embedding?
@@ -238,11 +287,12 @@ final class Document {
         title: String,
         docType: DocumentType = .generic,
         ocrText: String = "",
+        cleanedText: String? = nil,
         fields: [Field] = [],
         createdAt: Date = Date(),
         capturedAt: Date? = nil,
         location: String? = nil,
-        assetURL: String? = nil,
+        assets: [Asset] = [],
         personLinks: [DocumentPersonLink] = [],
         faceClusterIDs: [UUID] = [],
         embedding: Embedding? = nil,
@@ -252,14 +302,27 @@ final class Document {
         self.title = title
         self.docType = docType
         self.ocrText = ocrText
+        self.cleanedText = cleanedText
         self.fields = fields
         self.createdAt = createdAt
         self.capturedAt = capturedAt
         self.location = location
-        self.assetURL = assetURL
+        self.assets = assets
         self.personLinks = personLinks
         self.faceClusterIDs = faceClusterIDs
         self.embedding = embedding
         self.reminders = reminders
+    }
+
+    // Computed property for backward compatibility - returns first asset URL
+    var assetURL: String? {
+        assets.first?.fileURL
+    }
+
+    // Returns all image assets sorted by page number
+    var imageAssets: [Asset] {
+        assets
+            .filter { $0.assetType == .image }
+            .sorted { $0.pageNumber < $1.pageNumber }
     }
 }

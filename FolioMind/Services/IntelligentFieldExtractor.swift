@@ -16,6 +16,7 @@ import FoundationModels
 /// Protocol for LLM-based field extraction backends
 protocol LLMService {
     func extract(prompt: String, text: String) async throws -> String
+    func cleanText(_ rawText: String) async throws -> String
 }
 
 /// Intelligent field extractor that uses on-device AI and LLMs
@@ -489,6 +490,14 @@ final class MockLLMService: LLMService {
         // Return empty JSON for now - would be replaced with actual LLM call
         return "{}"
     }
+
+    func cleanText(_ rawText: String) async throws -> String {
+        // Simulate processing delay
+        try await Task.sleep(nanoseconds: 300_000_000) // 0.3 seconds
+
+        // Mock: Just return the raw text as-is
+        return rawText
+    }
 }
 
 // MARK: - OpenAI LLM Service
@@ -541,6 +550,51 @@ final class OpenAILLMService: LLMService {
         }
 
         return content
+    }
+
+    func cleanText(_ rawText: String) async throws -> String {
+        let url = URL(string: "https://api.openai.com/v1/chat/completions")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let prompt = """
+        Clean up the following OCR-extracted text to make it more readable. Fix any obvious OCR errors, normalize spacing and line breaks, and format it in a clear, readable way. Preserve all important information but make it easier to read. Do not translate or summarize - just clean up the formatting and obvious errors.
+
+        Return ONLY the cleaned text, without any explanations or additional commentary.
+        """
+
+        let messages = [
+            ["role": "system", "content": prompt],
+            ["role": "user", "content": rawText]
+        ]
+
+        let body: [String: Any] = [
+            "model": model,
+            "messages": messages,
+            "temperature": 0.1,
+            "max_tokens": 2000
+        ]
+
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              httpResponse.statusCode == 200 else {
+            throw NSError(domain: "OpenAI", code: -1, userInfo: [NSLocalizedDescriptionKey: "API request failed"])
+        }
+
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let choices = json["choices"] as? [[String: Any]],
+              let firstChoice = choices.first,
+              let message = firstChoice["message"] as? [String: Any],
+              let content = message["content"] as? String else {
+            throw NSError(domain: "OpenAI", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid response format"])
+        }
+
+        return content.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
@@ -601,6 +655,43 @@ final class AppleLLMService: LLMService {
         }
 
         return content
+    }
+
+    func cleanText(_ rawText: String) async throws -> String {
+        // Check if model is available
+        guard isAvailable else {
+            throw NSError(
+                domain: "AppleLLM",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "Foundation Models are not available. Ensure Apple Intelligence is enabled."]
+            )
+        }
+
+        // Start a session
+        let session = try model.startSession()
+
+        // Construct the cleanup prompt
+        let prompt = """
+        Clean up the following OCR-extracted text to make it more readable. Fix any obvious OCR errors, normalize spacing and line breaks, and format it in a clear, readable way. Preserve all important information but make it easier to read. Do not translate or summarize - just clean up the formatting and obvious errors.
+
+        Return ONLY the cleaned text, without any explanations or additional commentary.
+
+        Text to clean:
+        \(rawText)
+        """
+
+        // Get response from model
+        let response = try await session.respond(prompt: prompt)
+
+        guard let content = response.content else {
+            throw NSError(
+                domain: "AppleLLM",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "No content generated from model"]
+            )
+        }
+
+        return content.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 #endif

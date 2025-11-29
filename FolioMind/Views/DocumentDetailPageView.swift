@@ -1,13 +1,14 @@
 //
-//  DocumentDetailViewRevamped.swift
+//  DocumentDetailPageView.swift
 //  FolioMind
 //
 //  Redesigned detail view with improved UX and information hierarchy.
 //
 
 import SwiftUI
+import PhotosUI
 
-struct DocumentDetailViewRevamped: View {
+struct DocumentDetailPageView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
     @Bindable var document: Document
@@ -22,6 +23,9 @@ struct DocumentDetailViewRevamped: View {
     @State private var showAddReminderSheet: Bool = false
     @State private var showPermissionAlert: Bool = false
     @State private var showShareSheet: Bool = false
+    @State private var showRawText: Bool = false  // Toggle between cleaned and raw text
+    @State private var selectedAssetIndex: Int = 0  // Track which asset is being viewed
+    @State private var selectedPhotos: [PhotosPickerItem] = []  // For adding new assets
 
     enum DetailTab: String, CaseIterable {
         case overview = "Overview"
@@ -29,14 +33,27 @@ struct DocumentDetailViewRevamped: View {
         case ocr = "Text"
     }
 
+    private var imageAssets: [Asset] {
+        document.imageAssets
+    }
+
+    private var currentAsset: Asset? {
+        guard selectedAssetIndex < imageAssets.count else { return nil }
+        return imageAssets[selectedAssetIndex]
+    }
+
     private var imageURL: URL? {
-        guard let assetURLString = document.assetURL else { return nil }
-        return URL(fileURLWithPath: assetURLString)
+        guard let asset = currentAsset else { return nil }
+        return URL(fileURLWithPath: asset.fileURL)
     }
 
     private var hasImage: Bool {
         guard let url = imageURL else { return false }
         return FileManager.default.fileExists(atPath: url.path)
+    }
+
+    private var hasMultipleAssets: Bool {
+        imageAssets.count > 1
     }
 
     var body: some View {
@@ -130,47 +147,175 @@ struct DocumentDetailViewRevamped: View {
     // MARK: - Image Sections
 
     private var imageSection: some View {
+        VStack(spacing: 0) {
+            // Main image display
+            ZStack(alignment: .bottomTrailing) {
+                Button {
+                    showFullScreenImage = true
+                } label: {
+                    if let url = imageURL, let image = loadImage(from: url) {
+                        ZStack(alignment: .topTrailing) {
+                            Image(uiImage: image)
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(maxHeight: 400)
+
+                            // Page indicator for multiple assets
+                            if hasMultipleAssets {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "photo.stack")
+                                        .font(.caption)
+                                    Text("\(selectedAssetIndex + 1) of \(imageAssets.count)")
+                                        .font(.caption.weight(.medium))
+                                }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(.ultraThinMaterial)
+                                .clipShape(Capsule())
+                                .padding(12)
+                            }
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+
+                // Floating Add Assets button
+                PhotosPicker(selection: $selectedPhotos, maxSelectionCount: 10, matching: .images) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.body)
+                        Text("Add Images")
+                            .font(.subheadline.weight(.semibold))
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(document.docType.accentColor)
+                    .clipShape(Capsule())
+                    .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: 4)
+                }
+                .padding(16)
+                .onChange(of: selectedPhotos) { oldValue, newValue in
+                    Task {
+                        await addNewAssets(from: newValue)
+                    }
+                }
+            }
+
+            // Asset thumbnail strip (shown when multiple assets or when adding assets)
+            if hasMultipleAssets || !imageAssets.isEmpty {
+                assetThumbnailStrip
+            }
+        }
+    }
+
+    private var assetThumbnailStrip: some View {
+        VStack(spacing: 8) {
+            Divider()
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 12) {
+                    // Existing asset thumbnails
+                    ForEach(Array(imageAssets.enumerated()), id: \.element.id) { index, asset in
+                        assetThumbnail(asset: asset, index: index)
+                    }
+
+                    // Add asset button
+                    addAssetButton
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+            }
+        }
+        .background(Color(.systemBackground))
+    }
+
+    private func assetThumbnail(asset: Asset, index: Int) -> some View {
         Button {
-            showFullScreenImage = true
+            withAnimation(.easeInOut(duration: 0.2)) {
+                selectedAssetIndex = index
+            }
         } label: {
-            if let url = imageURL, let image = loadImage(from: url) {
-                ZStack(alignment: .bottomTrailing) {
+            Group {
+                let url = URL(fileURLWithPath: asset.fileURL)
+                if let image = loadImage(from: url) {
                     Image(uiImage: image)
                         .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(maxHeight: 400)
-
-                    // Full screen indicator
-                    HStack(spacing: 4) {
-                        Image(systemName: "arrow.up.left.and.arrow.down.right")
-                            .font(.caption)
-                        Text("View Full Size")
-                            .font(.caption.weight(.medium))
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(.ultraThinMaterial)
-                    .clipShape(Capsule())
-                    .padding(12)
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: 60, height: 60)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .strokeBorder(selectedAssetIndex == index ? document.docType.accentColor : .clear, lineWidth: 3)
+                        )
+                } else {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color(.systemGray5))
+                        .frame(width: 60, height: 60)
+                        .overlay {
+                            Image(systemName: asset.assetType.icon)
+                                .foregroundStyle(.secondary)
+                        }
                 }
             }
         }
         .buttonStyle(.plain)
     }
 
+    private var addAssetButton: some View {
+        PhotosPicker(selection: $selectedPhotos, maxSelectionCount: 10, matching: .images) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(style: StrokeStyle(lineWidth: 2, dash: [5]))
+                    .foregroundStyle(document.docType.accentColor.opacity(0.5))
+                    .frame(width: 60, height: 60)
+
+                VStack(spacing: 4) {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(document.docType.accentColor)
+                    Text("Add")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
     private var placeholderImageSection: some View {
-        ZStack {
+        ZStack(alignment: .center) {
             Rectangle()
                 .fill(document.docType.accentGradient)
-                .frame(height: 200)
+                .frame(height: 250)
 
-            VStack(spacing: 12) {
+            VStack(spacing: 16) {
                 Image(systemName: document.docType.symbolName)
                     .font(.system(size: 48))
                     .foregroundStyle(.white.opacity(0.5))
                 Text("No Image")
                     .font(.headline)
                     .foregroundStyle(.white.opacity(0.7))
+
+                // Add Images button
+                PhotosPicker(selection: $selectedPhotos, maxSelectionCount: 10, matching: .images) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.body)
+                        Text("Add Images")
+                            .font(.subheadline.weight(.semibold))
+                    }
+                    .foregroundStyle(document.docType.accentColor)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 12)
+                    .background(.white)
+                    .clipShape(Capsule())
+                    .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: 4)
+                }
+                .onChange(of: selectedPhotos) { oldValue, newValue in
+                    Task {
+                        await addNewAssets(from: newValue)
+                    }
+                }
             }
         }
     }
@@ -556,6 +701,17 @@ struct DocumentDetailViewRevamped: View {
                 Spacer()
                 HStack(spacing: 12) {
                     if !document.ocrText.isEmpty {
+                        // Toggle between cleaned and raw text
+                        if document.cleanedText != nil {
+                            Button {
+                                showRawText.toggle()
+                            } label: {
+                                Label(showRawText ? "Cleaned" : "Raw", systemImage: showRawText ? "sparkles" : "text.alignleft")
+                                    .font(.caption.weight(.medium))
+                                    .foregroundStyle(document.docType.accentColor)
+                            }
+                        }
+
                         Button {
                             showEditOCRSheet = true
                         } label: {
@@ -565,7 +721,8 @@ struct DocumentDetailViewRevamped: View {
                         }
 
                         Button {
-                            copyToClipboard(document.ocrText)
+                            let textToCopy = showRawText ? document.ocrText : (document.cleanedText ?? document.ocrText)
+                            copyToClipboard(textToCopy)
                         } label: {
                             Label("Copy All", systemImage: "doc.on.doc")
                                 .font(.caption.weight(.medium))
@@ -579,8 +736,9 @@ struct DocumentDetailViewRevamped: View {
                 emptyOCRView
             } else {
                 ScrollView {
-                    Text(document.ocrText)
-                        .font(.system(.body, design: .monospaced))
+                    let displayText = showRawText ? document.ocrText : (document.cleanedText ?? document.ocrText)
+                    Text(displayText)
+                        .font(.system(.body, design: showRawText ? .monospaced : .default))
                         .foregroundStyle(.primary)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -670,6 +828,47 @@ struct DocumentDetailViewRevamped: View {
         modelContext.delete(document)
         try? modelContext.save()
         dismiss()
+    }
+
+    private func addNewAssets(from items: [PhotosPickerItem]) async {
+        guard !items.isEmpty else { return }
+
+        for item in items {
+            guard let data = try? await item.loadTransferable(type: Data.self) else { continue }
+
+            // Create a unique filename in the documents directory
+            let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            let filename = "\(UUID().uuidString).jpg"
+            let fileURL = documentsPath.appendingPathComponent(filename)
+
+            do {
+                // Write the image data to the file
+                try data.write(to: fileURL)
+
+                // Create a new Asset and add it to the document
+                let nextPageNumber = (document.assets.map(\.pageNumber).max() ?? -1) + 1
+                let newAsset = Asset(
+                    fileURL: fileURL.path,
+                    assetType: .image,
+                    addedAt: Date(),
+                    pageNumber: nextPageNumber
+                )
+
+                modelContext.insert(newAsset)
+                document.assets.append(newAsset)
+
+                // Update the selected index to show the newly added asset
+                selectedAssetIndex = document.imageAssets.count - 1
+            } catch {
+                print("Error saving asset: \(error.localizedDescription)")
+            }
+        }
+
+        // Save the context
+        try? modelContext.save()
+
+        // Clear the selection
+        selectedPhotos = []
     }
 
     private func updateOrCreateField(key: String, value: String) {
@@ -2116,4 +2315,3 @@ struct ActivityViewController: UIViewControllerRepresentable {
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
-

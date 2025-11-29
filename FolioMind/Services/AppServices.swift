@@ -21,6 +21,7 @@ final class AppServices: ObservableObject {
     init() {
         let schema = Schema([
             Document.self,
+            Asset.self,
             Person.self,
             Field.self,
             FaceCluster.self,
@@ -75,7 +76,7 @@ final class AppServices: ObservableObject {
             modelContext: modelContext,
             embeddingService: embeddingService
         )
-        documentStore = DocumentStore(analyzer: analyzer, embeddingService: embeddingService)
+        documentStore = DocumentStore(analyzer: analyzer, embeddingService: embeddingService, llmService: llmService)
     }
 }
 
@@ -83,10 +84,12 @@ final class AppServices: ObservableObject {
 final class DocumentStore {
     private let analyzer: DocumentAnalyzer
     private let embeddingService: EmbeddingService
+    private let llmService: LLMService?
 
-    init(analyzer: DocumentAnalyzer, embeddingService: EmbeddingService) {
+    init(analyzer: DocumentAnalyzer, embeddingService: EmbeddingService, llmService: LLMService? = nil) {
         self.analyzer = analyzer
         self.embeddingService = embeddingService
+        self.llmService = llmService
     }
 
     func createStubDocument(in context: ModelContext, titleSuffix: Int) async throws -> Document {
@@ -100,7 +103,7 @@ final class DocumentStore {
             createdAt: now,
             capturedAt: now,
             location: "Local",
-            assetURL: nil,
+            assets: [],
             personLinks: [],
             faceClusterIDs: []
         )
@@ -150,18 +153,41 @@ final class DocumentStore {
             defaultType: .generic
         )
 
+        // Generate cleaned text using LLM if available
+        var cleanedText: String? = nil
+        if let llmService = llmService, !combinedOCR.isEmpty {
+            do {
+                cleanedText = try await llmService.cleanText(combinedOCR)
+            } catch {
+                // Fall back to nil if cleaning fails
+                print("Text cleaning failed: \(error.localizedDescription)")
+            }
+        }
+
         combinedFields.forEach { context.insert($0) }
         combinedFaces.forEach { context.insert($0) }
+
+        // Create Asset objects for each image
+        let assets = imageURLs.enumerated().map { index, url in
+            Asset(
+                fileURL: url.path,
+                assetType: .image,
+                addedAt: Date(),
+                pageNumber: index
+            )
+        }
+        assets.forEach { context.insert($0) }
 
         let document = Document(
             title: derivedTitle,
             docType: docType,
             ocrText: combinedOCR,
+            cleanedText: cleanedText,
             fields: combinedFields,
             createdAt: Date(),
             capturedAt: capturedAt,
             location: location,
-            assetURL: imageURLs.first?.path,
+            assets: assets,
             personLinks: [],
             faceClusterIDs: faceIDs
         )
