@@ -26,6 +26,8 @@ struct DocumentDetailPageView: View {
     @State private var showRawText: Bool = false  // Toggle between cleaned and raw text
     @State private var selectedAssetIndex: Int = 0  // Track which asset is being viewed
     @State private var selectedPhotos: [PhotosPickerItem] = []  // For adding new assets
+    @State private var isDeleting: Bool = false  // Prevent accessing document during deletion
+    @State private var cachedDocType: DocumentType?  // Cache docType to prevent access after deletion
 
     enum DetailTab: String, CaseIterable {
         case overview = "Overview"
@@ -54,6 +56,10 @@ struct DocumentDetailPageView: View {
 
     private var hasMultipleAssets: Bool {
         imageAssets.count > 1
+    }
+
+    private var safeDocType: DocumentType {
+        cachedDocType ?? document.docType
     }
 
     var body: some View {
@@ -88,13 +94,15 @@ struct DocumentDetailPageView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .principal) {
-                VStack(spacing: 2) {
-                    Text(document.title)
-                        .font(.headline)
-                        .lineLimit(1)
-                    Text(document.docType.displayName)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                if !isDeleting {
+                    VStack(spacing: 2) {
+                        Text(document.title)
+                            .font(.headline)
+                            .lineLimit(1)
+                        Text(safeDocType.displayName)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
 
@@ -141,6 +149,10 @@ struct DocumentDetailPageView: View {
             }
         } message: {
             Text("Are you sure you want to delete \"\(document.title)\"? This action cannot be undone.")
+        }
+        .onAppear {
+            // Cache docType to prevent crashes when accessing after deletion
+            cachedDocType = document.docType
         }
     }
 
@@ -190,7 +202,7 @@ struct DocumentDetailPageView: View {
                     .foregroundStyle(.white)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
-                    .background(document.docType.accentColor)
+                    .background(safeDocType.accentColor)
                     .clipShape(Capsule())
                     .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: 4)
                 }
@@ -246,7 +258,7 @@ struct DocumentDetailPageView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                         .overlay(
                             RoundedRectangle(cornerRadius: 8)
-                                .strokeBorder(selectedAssetIndex == index ? document.docType.accentColor : .clear, lineWidth: 3)
+                                .strokeBorder(selectedAssetIndex == index ? safeDocType.accentColor : .clear, lineWidth: 3)
                         )
                 } else {
                     RoundedRectangle(cornerRadius: 8)
@@ -267,13 +279,13 @@ struct DocumentDetailPageView: View {
             ZStack {
                 RoundedRectangle(cornerRadius: 8)
                     .strokeBorder(style: StrokeStyle(lineWidth: 2, dash: [5]))
-                    .foregroundStyle(document.docType.accentColor.opacity(0.5))
+                    .foregroundStyle(safeDocType.accentColor.opacity(0.5))
                     .frame(width: 60, height: 60)
 
                 VStack(spacing: 4) {
                     Image(systemName: "plus.circle.fill")
                         .font(.title3)
-                        .foregroundStyle(document.docType.accentColor)
+                        .foregroundStyle(safeDocType.accentColor)
                     Text("Add")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
@@ -285,11 +297,11 @@ struct DocumentDetailPageView: View {
     private var placeholderImageSection: some View {
         ZStack(alignment: .center) {
             Rectangle()
-                .fill(document.docType.accentGradient)
+                .fill(safeDocType.accentGradient)
                 .frame(height: 250)
 
             VStack(spacing: 16) {
-                Image(systemName: document.docType.symbolName)
+                Image(systemName: safeDocType.symbolName)
                     .font(.system(size: 48))
                     .foregroundStyle(.white.opacity(0.5))
                 Text("No Image")
@@ -304,7 +316,7 @@ struct DocumentDetailPageView: View {
                         Text("Add Images")
                             .font(.subheadline.weight(.semibold))
                     }
-                    .foregroundStyle(document.docType.accentColor)
+                    .foregroundStyle(safeDocType.accentColor)
                     .padding(.horizontal, 20)
                     .padding(.vertical, 12)
                     .background(.white)
@@ -336,7 +348,7 @@ struct DocumentDetailPageView: View {
                             .foregroundStyle(selectedTab == tab ? .primary : .secondary)
 
                         Rectangle()
-                            .fill(selectedTab == tab ? document.docType.accentColor : .clear)
+                            .fill(selectedTab == tab ? safeDocType.accentColor : .clear)
                             .frame(height: 2)
                     }
                 }
@@ -372,7 +384,7 @@ struct DocumentDetailPageView: View {
         VStack(spacing: 12) {
             SectionHeader(title: "Key Information", icon: "star.fill")
 
-            switch document.docType {
+            switch safeDocType {
             case .creditCard:
                 creditCardInfo
             case .insuranceCard:
@@ -459,14 +471,61 @@ struct DocumentDetailPageView: View {
 
     private var insuranceCardInfo: some View {
         VStack(spacing: 8) {
-            if let member = fieldValue(for: ["member_name", "name"]) {
-                InfoChip(label: "Member", value: member, icon: "person.fill", color: .blue)
+            // Display all family members
+            if let memberNames = fieldValue(for: ["member_name", "name"]) {
+                let members = memberNames.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+
+                if members.count == 1 {
+                    // Single member
+                    InfoChip(label: "Member", value: members[0], icon: "person.fill", color: .blue)
+                } else if members.count > 1 {
+                    // Multiple family members
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Image(systemName: "person.2.fill")
+                                .foregroundStyle(.blue)
+                                .font(.caption)
+                            Text("Family Members")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                        }
+
+                        VStack(spacing: 4) {
+                            ForEach(Array(members.enumerated()), id: \.offset) { index, member in
+                                HStack {
+                                    Text("\(index + 1).")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .frame(width: 20, alignment: .leading)
+                                    Text(member)
+                                        .font(.subheadline)
+                                    Spacer()
+                                }
+                            }
+                        }
+                        .padding(.vertical, 8)
+                        .padding(.horizontal, 12)
+                        .background(Color.blue.opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
+                }
             }
-            if let provider = fieldValue(for: ["provider", "insurer"]) {
+
+            if let provider = fieldValue(for: ["insurance_company", "provider", "insurer"]) {
                 InfoChip(label: "Provider", value: provider, icon: "cross.vial.fill", color: .purple)
             }
             if let memberId = fieldValue(for: ["member_id", "id"]) {
                 InfoChip(label: "Member ID", value: memberId, icon: "number", color: .green, copyable: true)
+            }
+            if let groupNumber = fieldValue(for: ["group_number", "group"]) {
+                InfoChip(label: "Group Number", value: groupNumber, icon: "number.square", color: .orange, copyable: true)
+            }
+            if let payerNumber = fieldValue(for: ["payer_number", "payer"]) {
+                InfoChip(label: "Payer Number", value: payerNumber, icon: "number.circle", color: .indigo, copyable: true)
+            }
+            if let planName = fieldValue(for: ["plan_name", "plan"]) {
+                InfoChip(label: "Plan", value: planName, icon: "doc.text.fill", color: .teal)
             }
         }
     }
@@ -708,7 +767,7 @@ struct DocumentDetailPageView: View {
                             } label: {
                                 Label(showRawText ? "Cleaned" : "Raw", systemImage: showRawText ? "sparkles" : "text.alignleft")
                                     .font(.caption.weight(.medium))
-                                    .foregroundStyle(document.docType.accentColor)
+                                    .foregroundStyle(safeDocType.accentColor)
                             }
                         }
 
@@ -717,7 +776,7 @@ struct DocumentDetailPageView: View {
                         } label: {
                             Label("Edit", systemImage: "pencil")
                                 .font(.caption.weight(.medium))
-                                .foregroundStyle(document.docType.accentColor)
+                                .foregroundStyle(safeDocType.accentColor)
                         }
 
                         Button {
@@ -726,7 +785,7 @@ struct DocumentDetailPageView: View {
                         } label: {
                             Label("Copy All", systemImage: "doc.on.doc")
                                 .font(.caption.weight(.medium))
-                                .foregroundStyle(document.docType.accentColor)
+                                .foregroundStyle(safeDocType.accentColor)
                         }
                     }
                 }
@@ -825,6 +884,7 @@ struct DocumentDetailPageView: View {
     }
 
     private func deleteDocument() {
+        isDeleting = true
         modelContext.delete(document)
         try? modelContext.save()
         dismiss()

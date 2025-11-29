@@ -15,12 +15,18 @@ struct CardDetails {
 }
 
 enum CardDetailsExtractor {
+    private struct PanCandidate {
+        let value: String
+        let hasLuhn: Bool
+        let hasContext: Bool
+    }
+
     // MARK: - Public API
 
     static func extract(ocrText: String, fields: [Field]) -> CardDetails {
         // Try to extract from structured fields first
-        let panFromFields = fieldValue(for: ["card_number", "card number", "pan"], in: fields)
-        let expiryFromFields = fieldValue(for: ["expiry", "exp", "valid_thru"], in: fields)
+        let panFromFields = candidatePan(from: fieldValue(for: ["card_number", "pan"], in: fields))
+        let expiryFromFields = fieldValue(for: ["expiry_date", "expiry", "exp", "valid_thru"], in: fields)
         let holderFromFields = fieldValue(for: ["cardholder", "name"], in: fields)
         let issuerFromFields = fieldValue(for: ["issuer", "bank", "network"], in: fields)
 
@@ -38,32 +44,55 @@ enum CardDetailsExtractor {
 
     private static func fieldValue(for keys: [String], in fields: [Field]) -> String? {
         fields.first { field in
-            keys.contains(field.key.lowercased())
+            let normalized = canonicalKey(field.key)
+            return keys.contains(normalized)
         }?.value
     }
 
     // MARK: - PAN Extraction
 
     private static func extractPan(from text: String) -> String? {
-        // Search line by line to avoid concatenating numbers from different lines
-        let lines = text.components(separatedBy: .newlines)
+        let normalizedText = text.replacingOccurrences(of: "\n", with: " ")
         let pattern = "(?:\\d[\\s-]?){13,19}"
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
 
-        var candidates: [String] = []
-        for line in lines {
-            let matches = regex.matches(in: line, range: NSRange(location: 0, length: line.utf16.count))
-            for match in matches {
-                guard let range = Range(match.range, in: line) else { continue }
-                let digits = String(line[range]).filter(\.isWholeNumber)
-                if (13...19).contains(digits.count) {
-                    candidates.append(digits)
-                }
+        var candidates: [PanCandidate] = []
+
+        let matches = regex.matches(in: normalizedText, range: NSRange(location: 0, length: normalizedText.utf16.count))
+        for match in matches {
+            guard let range = Range(match.range, in: normalizedText) else { continue }
+            let raw = String(normalizedText[range])
+            let digits = raw.filter(\.isWholeNumber)
+            guard (13...19).contains(digits.count) else { continue }
+
+            let context = contextWindow(around: range, in: normalizedText)
+            let hasContext = hasCardContext(in: context)
+            let candidate = PanCandidate(
+                value: digits,
+                hasLuhn: isLuhnValid(digits),
+                hasContext: hasContext
+            )
+
+            if !candidates.contains(where: { $0.value == candidate.value }) {
+                candidates.append(candidate)
             }
         }
 
-        // Prefer Luhn-valid PAN, fallback to longest
-        return candidates.first(where: isLuhnValid) ?? candidates.max(by: { $0.count < $1.count })
+        // Prioritize Luhn-valid candidates with context, then contextual candidates, then longest remaining
+        if let bestValid = candidates
+            .filter({ $0.hasLuhn })
+            .sorted(by: { score(for: $0) > score(for: $1) })
+            .first {
+            return bestValid.value
+        }
+
+        if let contextual = candidates
+            .filter({ $0.hasContext })
+            .max(by: { $0.value.count < $1.value.count }) {
+            return contextual.value
+        }
+
+        return nil
     }
 
     // MARK: - Expiry Extraction
@@ -161,7 +190,7 @@ enum CardDetailsExtractor {
             "chase", "wells fargo",
             "citibank", "citi",
             "capital one", "hsbc",
-            "amex", "american express",
+            "american express", "amex",
             "discover", "us bank",
             "td", "pnc", "barclays", "santander"
         ]
@@ -193,7 +222,14 @@ enum CardDetailsExtractor {
             .filter { !$0.isEmpty }
     }
 
-    private static func normalizeExpiry(_ raw: String) -> String {
+    private static func candidatePan(from value: String?) -> String? {
+        guard let value else { return nil }
+        let digits = value.filter(\.isWholeNumber)
+        guard (13...19).contains(digits.count) else { return nil }
+        return isLuhnValid(digits) ? digits : nil
+    }
+
+    static func normalizeExpiry(_ raw: String) -> String {
         let digits = raw.filter(\.isWholeNumber)
         guard digits.count == 4 || digits.count == 6 else { return raw }
 
@@ -239,5 +275,41 @@ enum CardDetailsExtractor {
             }
         }
         return sum % 10 == 0
+    }
+
+    private static func canonicalKey(_ key: String) -> String {
+        let normalized = key
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: " ", with: "_")
+
+        switch normalized {
+        case "exp", "exp_date", "expiry", "expiry_date", "expiration", "expiration_date", "valid_thru", "valid_through":
+            return "expiry_date"
+        case "card_number", "cardnumber", "card_no", "card_num", "pan":
+            return "card_number"
+        case "issuer", "bank", "bank_name":
+            return "issuer"
+        default:
+            return normalized
+        }
+    }
+
+    private static func contextWindow(around range: Range<String.Index>, in text: String) -> String {
+        let lowerBound = text.index(range.lowerBound, offsetBy: -20, limitedBy: text.startIndex) ?? text.startIndex
+        let upperBound = text.index(range.upperBound, offsetBy: 20, limitedBy: text.endIndex) ?? text.endIndex
+        return String(text[lowerBound..<upperBound]).lowercased()
+    }
+
+    private static func hasCardContext(in context: String) -> Bool {
+        let keywords = ["valid", "exp", "thru", "card", "debit", "credit", "cvv", "ccv", "valid thru", "good thru"]
+        return keywords.contains { context.contains($0) }
+    }
+
+    private static func score(for candidate: PanCandidate) -> Int {
+        var score = candidate.value.count
+        if candidate.hasContext { score += 2 }
+        if candidate.hasLuhn { score += 3 }
+        return score
     }
 }

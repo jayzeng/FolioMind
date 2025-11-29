@@ -55,8 +55,21 @@ final class AppServices: ObservableObject {
             }
         }
 
-        // Initialize intelligent field extractor with on-device LLM if available
-        let llmService = LLMServiceFactory.create(type: .apple)
+        // Initialize intelligent field extractor with LLM
+        // Try Apple Intelligence first, fall back to OpenAI if not available
+        var llmService = LLMServiceFactory.create(type: .apple)
+
+        // Fallback to OpenAI if Apple Intelligence is not available
+        // TODO: Replace with your actual OpenAI API key or make this configurable
+        if llmService == nil {
+            // Uncomment and add your API key to enable OpenAI fallback:
+            llmService = LLMServiceFactory.create(type: .openai(apiKey: "OPENAI_API_KEY_REMOVED"))
+            print("⚠️ Apple Intelligence not available. Using pattern-based extraction only.")
+            print("💡 To enable intelligent extraction, add OpenAI API key or use iOS 18.2+ with Apple Intelligence enabled.")
+        } else {
+            print("✅ Apple Intelligence available for intelligent field extraction")
+        }
+
         let intelligentExtractor = IntelligentFieldExtractor(
             llmService: llmService,
             useNaturalLanguage: true
@@ -65,7 +78,8 @@ final class AppServices: ObservableObject {
         analyzer = VisionDocumentAnalyzer(
             cloudService: nil,
             defaultType: .generic,
-            intelligentExtractor: intelligentExtractor
+            intelligentExtractor: intelligentExtractor,
+            llmService: llmService
         )
         embeddingService = SimpleEmbeddingService()
         linkingEngine = BasicLinkingEngine()

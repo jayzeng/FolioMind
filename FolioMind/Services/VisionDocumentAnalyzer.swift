@@ -10,6 +10,12 @@ import Foundation
 #if canImport(Vision)
 import Vision
 #endif
+#if canImport(VisionKit)
+import VisionKit
+#endif
+#if canImport(UIKit)
+import UIKit
+#endif
 
 @MainActor
 struct VisionDocumentAnalyzer: DocumentAnalyzer {
@@ -17,23 +23,40 @@ struct VisionDocumentAnalyzer: DocumentAnalyzer {
     let cloudService: CloudOCRService?
     let defaultType: DocumentType
     let intelligentExtractor: IntelligentFieldExtractor?
+    let llmService: LLMService?
 
     init(
         ocrSource: OCRSource? = nil,
         cloudService: CloudOCRService? = nil,
         defaultType: DocumentType = .generic,
-        intelligentExtractor: IntelligentFieldExtractor? = nil
+        intelligentExtractor: IntelligentFieldExtractor? = nil,
+        llmService: LLMService? = nil
     ) {
 #if canImport(Vision)
-        self.ocrSource = ocrSource ?? VisionOCRSource()
+        if let ocrSource {
+            self.ocrSource = ocrSource
+        } else {
+#if canImport(VisionKit)
+            if #available(iOS 16.0, *) {
+                self.ocrSource = VisionKitOCRSource()
+            } else {
+                self.ocrSource = VisionOCRSource()
+            }
+#else
+            self.ocrSource = VisionOCRSource()
+#endif
+        }
 #endif
         self.cloudService = cloudService
         self.defaultType = defaultType
         self.intelligentExtractor = intelligentExtractor
+        self.llmService = llmService
     }
 
     func analyze(imageURL: URL, hints: DocumentHints?) async throws -> DocumentAnalysisResult {
-        let localText = try await ocrSource.recognizeText(at:imageURL)
+        let rawText = try await ocrSource.recognizeText(at:imageURL)
+        let cleanedText = await cleanIfPossible(rawText)
+        let localText = cleanedText ?? rawText
         let faces = try await VisionFaceDetector().detectFaces(at: imageURL)
 
         // Classify document type first (for intelligent extraction)
@@ -49,16 +72,22 @@ struct VisionDocumentAnalyzer: DocumentAnalyzer {
         var extractedFields = patternFields
         if let intelligentExtractor = intelligentExtractor {
             do {
+                print("🧠 Running intelligent field extraction for \(preliminaryType.displayName)...")
                 let intelligentFields = try await intelligentExtractor.extractFields(
                     from: localText,
                     docType: preliminaryType
                 )
+                print("✅ Intelligent extraction found \(intelligentFields.count) fields")
                 // Merge pattern-based and LLM-based fields
                 extractedFields = mergeFields(pattern: patternFields, intelligent: intelligentFields)
+                print("📊 Total fields after merge: \(extractedFields.count)")
             } catch {
                 // Fall back to pattern-based fields if intelligent extraction fails
-                print("Intelligent extraction failed: \(error), using pattern-based fields")
+                print("⚠️ Intelligent extraction failed: \(error)")
+                print("📝 Using pattern-based fields only (\(patternFields.count) fields)")
             }
+        } else {
+            print("ℹ️ Intelligent extractor not configured, using pattern-based extraction only")
         }
 
         let classifiedLocalType = DocumentTypeClassifier.classify(
@@ -145,6 +174,16 @@ struct VisionDocumentAnalyzer: DocumentAnalyzer {
             faceClusters: mergedFaces
         )
     }
+
+    private func cleanIfPossible(_ text: String) async -> String? {
+        guard let llmService, !text.isEmpty else { return nil }
+        do {
+            return try await llmService.cleanText(text)
+        } catch {
+            print("Text cleaning with LLM failed: \(error.localizedDescription)")
+            return nil
+        }
+    }
 }
 
 #if canImport(Vision)
@@ -154,7 +193,7 @@ struct VisionOCRSource: OCRSource {
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = true
 
-        let handler = try VNImageRequestHandler(url: url)
+        let handler = VNImageRequestHandler(url: url)
         try handler.perform([request])
 
         let observations = request.results ?? []
@@ -164,10 +203,11 @@ struct VisionOCRSource: OCRSource {
     }
 }
 
+@MainActor
 struct VisionFaceDetector {
     func detectFaces(at url: URL) async throws -> [FaceCluster] {
         let request = VNDetectFaceRectanglesRequest()
-        let handler = try VNImageRequestHandler(url: url)
+        let handler = VNImageRequestHandler(url: url)
         try handler.perform([request])
         let observations = request.results ?? []
         return observations.enumerated().map { index, face in
@@ -188,9 +228,30 @@ struct VisionOCRSource: OCRSource {
     }
 }
 
+@MainActor
 struct VisionFaceDetector {
     func detectFaces(at url: URL) async throws -> [FaceCluster] {
         throw NSError(domain: "FolioMind.Vision", code: -1, userInfo: [NSLocalizedDescriptionKey: "Vision face detection is unavailable on this platform."])
+    }
+}
+#endif
+
+#if canImport(VisionKit)
+@available(iOS 16.0, *)
+struct VisionKitOCRSource: OCRSource {
+    func recognizeText(at url: URL) async throws -> String {
+        guard let image = UIImage(contentsOfFile: url.path) else {
+            throw NSError(domain: "FolioMind.VisionKit", code: -1, userInfo: [NSLocalizedDescriptionKey: "Could not load image for OCR."])
+        }
+
+        let analyzer = ImageAnalyzer()
+        let configuration = ImageAnalyzer.Configuration([.text])
+        let analysis = try await analyzer.analyze(image, configuration: configuration)
+        let transcript = analysis.transcript
+        if !transcript.isEmpty {
+            return transcript
+        }
+        return ""
     }
 }
 #endif

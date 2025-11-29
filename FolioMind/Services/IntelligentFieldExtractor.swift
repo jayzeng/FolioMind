@@ -29,6 +29,7 @@ final class IntelligentFieldExtractor {
         self.llmService = llmService
         self.useNaturalLanguage = useNaturalLanguage
     }
+    
 
     /// Extract fields intelligently based on document type
     func extractFields(from text: String, docType: DocumentType) async throws -> [Field] {
@@ -52,7 +53,8 @@ final class IntelligentFieldExtractor {
         // Apply document-type-specific extraction
         fields.append(contentsOf: extractDocumentSpecificFields(from: text, docType: docType))
 
-        return deduplicateAndMerge(fields)
+        let merged = deduplicateAndMerge(fields, docType: docType)
+        return mapToSchema(merged, docType: docType)
     }
 
     // MARK: - Natural Language Framework Extraction
@@ -112,9 +114,171 @@ final class IntelligentFieldExtractor {
         docType: DocumentType,
         service: LLMService
     ) async throws -> [Field] {
-        let prompt = buildPrompt(for: docType)
-        let response = try await service.extract(prompt: prompt, text: text)
+        // For generic documents, use comprehensive extraction prompt
+        // For specific document types, use targeted prompts
+        let response: String
+        if docType == .generic {
+            response = try await extractWithComprehensivePrompt(from: text, service: service)
+        } else {
+            let prompt = buildPrompt(for: docType)
+            response = try await service.extract(prompt: prompt, text: text)
+        }
         return parseStructuredResponse(response, docType: docType)
+    }
+    
+    /// Extracts fields using a comprehensive prompt suitable for any document type
+    private func extractWithComprehensivePrompt(
+        from text: String,
+        service: LLMService
+    ) async throws -> String {
+        let prompt = """
+        You are an information extraction engine for arbitrary real-world documents
+        (e.g. insurance cards, billing statements, property tax notices, utility bills,
+        receipts, bank statements, government letters, etc.).
+
+        TASK
+        - Read the document text.
+        - Infer what type of document it is.
+        - Normalize the content.
+        - Extract as many relevant fields as you can.
+        - Return a single JSON object that follows the schema below.
+
+        OUTPUT RULES
+        - Output **only** a JSON object, no extra text or explanations.
+        - Use double quotes for all keys and string values.
+        - Omit any field you cannot confidently determine.
+        - Do NOT invent values or guess IDs, dates, or amounts.
+        - Use English for all field values, even if the source text is in another language.
+
+        DOCUMENT TYPE
+        - Infer a high-level type:
+          - "credit_card", "debit_card", "insurance_card",
+            "billing_statement", "bank_statement", "receipt",
+            "utility_bill", "property_tax", "tax_document",
+            "government_notice", "id_document", "other"
+        - Put this in "document_type".
+        - Optionally add a short free-text "document_subtype" if helpful.
+
+        NORMALIZATION RULES
+        - Card numbers:
+          - Return **only the last 4 digits** in "card_number".
+          - Mask the rest with "X" if needed, e.g. "XXXX-XXXX-XXXX-1234".
+        - Dates:
+          - Prefer ISO format: "YYYY-MM-DD" if full date is known.
+          - If only month/year is known, use "YYYY-MM".
+          - If only year is known, use "YYYY".
+        - Money amounts:
+          - Return as strings with two decimal places, e.g. "123.45".
+          - Include currency symbol if present in the original text (e.g. "$123.45").
+        - Phone numbers:
+          - Normalize to a standard readable format when possible,
+            e.g. "(800) 123-4567" or "+1-800-123-4567".
+        - Addresses:
+          - Keep as a single line or a small set of lines, but remove obvious line breaks
+            that split a street address awkwardly.
+
+        POSSIBLE FIELDS (use only what applies)
+
+        Meta & general
+        - "document_type": one of the values listed above
+        - "document_subtype": "short free-text subtype (optional)"
+        - "title": "document title or subject"
+        - "primary_date": "main date for this document (normalized)"
+        - "all_dates": ["other dates mentioned, normalized if possible"]
+        - "names": ["any person names mentioned"]
+        - "organizations": ["any organization, company, or government names"]
+        - "reference_numbers": ["any IDs or reference numbers"]
+        - "key_information": "short summary of the most important details"
+
+        Parties & contact
+        - "account_holder_name": "primary person/entity responsible for the account"
+        - "recipient_name": "to whom this document is addressed"
+        - "sender_name": "who issued this document"
+        - "billing_address": "billing address if present"
+        - "service_address": "service location if present"
+        - "mailing_address": "mailing address if different"
+        - "phone_number": "main customer service or contact phone"
+        - "email": "contact email if present"
+
+        Financial summary (generic)
+        - "account_number": "account or loan number"
+        - "statement_date": "statement or notice date"
+        - "billing_period": "billing period date range"
+        - "due_date": "payment due date"
+        - "amount_due": "total amount due"
+        - "minimum_payment": "minimum payment amount"
+        - "previous_balance": "previous balance"
+        - "new_charges": "new charges"
+        - "payments_received": "payments applied"
+        - "fees": "any fees if explicitly listed"
+        - "taxes": "any taxes if explicitly listed"
+        - "currency": "currency code or symbol if clearly indicated"
+        - "line_items": [
+            {
+              "description": "item/charge description",
+              "date": "item date if available",
+              "amount": "item amount"
+            }
+          ]
+
+        Card-specific (credit/debit)
+        - "cardholder": "name on card"
+        - "card_number": "card number (last 4 digits only)"
+        - "expiry_date": "expiration date (normalized)"
+        - "issuer": "card issuer / bank name"
+        - "card_type": "visa | mastercard | amex | discover | other"
+
+        Insurance-specific
+        - "member_name": "insured member name(s) - if multiple family members are listed, provide comma-separated names (e.g. 'JOHN DOE, JANE DOE, JIMMY DOE')"
+        - "member_id": "member / subscriber ID"
+        - "group_number": "group number"
+        - "payer_number": "payer number / payer ID (common on dental cards)"
+        - "policy_number": "policy number"
+        - "plan_name": "insurance plan name"
+        - "insurance_company": "insurance provider / company name"
+        - "effective_date": "coverage effective date"
+        - "copay": "copay amounts if shown"
+        - "rx_bin": "prescription BIN"
+        - "rx_pcn": "prescription PCN"
+
+        Property / tax-specific
+        - "property_address": "property location"
+        - "parcel_number": "parcel / lot / tax ID"
+        - "property_id": "other property identifier"
+        - "tax_year": "tax year"
+        - "assessed_value": "assessed property value"
+        - "taxable_value": "taxable value"
+        - "tax_amount": "total tax amount"
+        - "installments": [
+            {
+              "due_date": "installment due date",
+              "amount": "installment amount"
+            }
+          ]
+
+        Utilities / services (electricity, water, gas, internet, etc.)
+        - "service_type": "electricity | water | gas | internet | phone | other"
+        - "meter_number": "meter or service ID"
+        - "usage_period": "usage period date range"
+        - "usage_amount": "usage quantity (e.g. kWh, gallons, GB) if given"
+
+        Free-form fallback
+        - "amounts": ["any monetary amounts mentioned"]
+        - "other_fields": {
+            "key": "value",
+            "key2": "value2"
+          }
+
+        RULES FOR FIELD SELECTION
+        - Only include fields that clearly apply to this document.
+        - If there are multiple plausible values for one field, choose the one that best matches
+          how real documents are usually structured (e.g. the main amount due, the primary date).
+        - If you are unsure, omit the field instead of guessing.
+
+        Now extract and return a single JSON object for this document.
+        """
+        let response = try await service.extract(prompt: prompt, text: text)
+        return response
     }
 
     private func buildPrompt(for docType: DocumentType) -> String {
@@ -136,11 +300,12 @@ final class IntelligentFieldExtractor {
             return """
             Extract the following fields from this insurance card. Return in JSON format:
             {
-              "member_name": "insured member name",
+              "member_name": "insured member name(s) - if multiple family members listed, provide comma-separated (e.g. 'JOHN DOE, JANE DOE, JIMMY DOE')",
               "member_id": "member/subscriber ID",
               "group_number": "group number",
+              "payer_number": "payer number/payer ID (common on dental cards)",
               "policy_number": "policy number",
-              "plan_name": "insurance plan name",
+              "plan_name": "insurance plan name (e.g. 'Dental PPO', 'Enhanced Dental PPO')",
               "insurance_company": "insurance provider/company name",
               "effective_date": "coverage effective date",
               "copay": "copay amounts if shown",
@@ -149,6 +314,9 @@ final class IntelligentFieldExtractor {
               "rx_pcn": "prescription PCN"
             }
             Only include fields you can confidently extract. Use null for missing fields.
+            IMPORTANT:
+            - If you see multiple member names (often numbered like '01 NAME1', '02 NAME2'), include ALL of them as comma-separated values in member_name.
+            - For plan_name, extract the specific plan type (like "Dental PPO" or "Enhanced Dental PPO"), not generic service names.
             """
 
         case .billStatement:
@@ -248,7 +416,40 @@ final class IntelligentFieldExtractor {
         }
 
         for (key, value) in json {
-            guard let stringValue = value as? String, !stringValue.isEmpty, stringValue != "null" else {
+            // Handle different value types
+            let stringValue: String
+
+            if let str = value as? String {
+                // Direct string value
+                guard !str.isEmpty && str != "null" else { continue }
+                stringValue = str
+            } else if let array = value as? [Any] {
+                // Array - convert to comma-separated string for simple arrays
+                // or JSON string for complex nested structures
+                guard !array.isEmpty else { continue }
+
+                // Check if it's an array of strings
+                if let stringArray = array as? [String] {
+                    stringValue = stringArray.joined(separator: ", ")
+                } else if let jsonData = try? JSONSerialization.data(withJSONObject: array, options: [.prettyPrinted]),
+                          let jsonString = String(data: jsonData, encoding: .utf8) {
+                    // Complex array (objects, nested structures) - store as JSON
+                    stringValue = jsonString
+                } else {
+                    continue
+                }
+            } else if let dict = value as? [String: Any] {
+                // Nested object - convert to JSON string
+                guard let jsonData = try? JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted]),
+                      let jsonString = String(data: jsonData, encoding: .utf8) else {
+                    continue
+                }
+                stringValue = jsonString
+            } else if let number = value as? NSNumber {
+                // Handle numbers
+                stringValue = number.stringValue
+            } else {
+                // Skip null or unsupported types
                 continue
             }
 
@@ -287,10 +488,31 @@ final class IntelligentFieldExtractor {
     private func extractCreditCardFields(from text: String) -> [Field] {
         var fields: [Field] = []
 
-        // Extract card issuer
-        let issuers = ["visa", "mastercard", "american express", "amex", "discover", "chase", "citi", "capital one"]
+        let lowercased = text.lowercased()
+
+        // Extract card network separately from issuing bank to avoid duplicates
+        let networks = ["visa", "mastercard", "unionpay", "maestro", "diners", "jcb"]
+        for network in networks {
+            if lowercased.contains(network) {
+                fields.append(Field(
+                    key: "card_type",
+                    value: network.capitalized,
+                    confidence: 0.8,
+                    source: .vision
+                ))
+                break
+            }
+        }
+
+        // Extract issuing bank/brand (include co-branded issuers like Amex/Discover)
+        let issuers = [
+            "american express", "amex",
+            "discover",
+            "chase", "citi", "capital one", "bank of america", "bofa", "boa",
+            "wells fargo", "hsbc", "us bank", "td", "pnc", "barclays", "santander"
+        ]
         for issuer in issuers {
-            if text.lowercased().contains(issuer) {
+            if lowercased.contains(issuer) {
                 fields.append(Field(
                     key: "issuer",
                     value: issuer.capitalized,
@@ -312,35 +534,125 @@ final class IntelligentFieldExtractor {
     private func extractInsuranceFields(from text: String) -> [Field] {
         var fields: [Field] = []
 
-        // Extract member ID
+        // Extract member ID (handles formats like "W2966 43427", "ABC123456", etc.)
         let memberIDPatterns = [
-            "(?:member|subscriber|id).*?([A-Z0-9]{8,12})",
-            "ID[:\\s]+([A-Z0-9]{8,12})"
+            "\\bID[:\\\\s#]+([A-Z0-9][A-Z0-9\\\\s-]{3,20}?)(?=\\\\s*\\\\n|\\\\s{2,}|$)",
+            "(?:member|subscriber)\\\\s*(?:id|ID|#)[:\\\\s#]*([A-Z0-9][A-Z0-9\\\\s-]{3,20}?)(?=\\\\s*\\\\n|\\\\s{2,}|$)"
         ]
 
         for pattern in memberIDPatterns {
             if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
                let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
                let range = Range(match.range(at: 1), in: text) {
+                let memberId = String(text[range]).trimmingCharacters(in: .whitespacesAndNewlines)
                 fields.append(Field(
                     key: "member_id",
-                    value: String(text[range]),
-                    confidence: 0.8,
+                    value: memberId,
+                    confidence: 0.85,
                     source: .vision
                 ))
                 break
             }
         }
 
-        // Extract group number
-        let groupPattern = "(?:group|grp)[:\\s#]+([A-Z0-9-]+)"
-        if let regex = try? NSRegularExpression(pattern: groupPattern, options: .caseInsensitive),
+        // Extract group number (handles "Den Grp #:", "Group:", etc.)
+        let groupPatterns = [
+            "(?:den(?:tal)?\\\\s+)?(?:group|grp)[:\\\\s#]+([A-Z0-9][A-Z0-9\\\\s-]{3,25}?)(?=\\\\s*\\\\n|\\\\s{2,}|$)",
+            "\\bgrp[:\\\\s#]+([A-Z0-9][A-Z0-9\\\\s-]{3,25}?)(?=\\\\s*\\\\n|\\\\s{2,}|$)"
+        ]
+
+        for pattern in groupPatterns {
+            if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+               let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+               let range = Range(match.range(at: 1), in: text) {
+                let groupNum = String(text[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+                fields.append(Field(
+                    key: "group_number",
+                    value: groupNum,
+                    confidence: 0.85,
+                    source: .vision
+                ))
+                break
+            }
+        }
+
+        // Extract payer number (new field for dental/medical cards)
+        let payerPattern = "payer[:\\\\s#]+([A-Z0-9][A-Z0-9\\\\s-]{3,25}?)(?=\\\\s*\\\\n|\\\\s{2,}|$)"
+        if let regex = try? NSRegularExpression(pattern: payerPattern, options: .caseInsensitive),
            let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
            let range = Range(match.range(at: 1), in: text) {
+            let payerNum = String(text[range]).trimmingCharacters(in: .whitespacesAndNewlines)
             fields.append(Field(
-                key: "group_number",
-                value: String(text[range]),
+                key: "payer_number",
+                value: payerNum,
+                confidence: 0.85,
+                source: .vision
+            ))
+        }
+
+        // Extract insurer name from known list
+        let insurers = ["aetna", "cvs health", "cigna", "unitedhealthcare", "anthem", "blue cross", "blue shield", "kaiser", "humana"]
+        let lower = text.lowercased()
+        if let match = insurers.first(where: { lower.contains($0) }) {
+            fields.append(Field(
+                key: "insurance_company",
+                value: match.capitalized,
                 confidence: 0.8,
+                source: .vision
+            ))
+        }
+
+        // Extract plan name - prioritize specific plan types over generic terms
+        let lines = text.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+
+        // Look for lines with specific plan keywords, prioritizing actual plan types
+        let planCandidates = lines.filter { line in
+            let lower = line.lowercased()
+            // Match actual plan types (PPO, HMO, EPO, etc.) but exclude generic service names
+            return (lower.contains("ppo") || lower.contains("hmo") || lower.contains("epo") ||
+                    lower.contains("pos") || lower.contains("dental") || lower.contains("vision") ||
+                    lower.contains("medical"))
+                && !lower.contains("advocate") // Exclude service names
+                && !lower.contains("see your plan") // Exclude instructions
+                && !lower.contains("www.") // Exclude URLs
+                && line.count < 50 // Reasonable plan name length
+        }
+
+        // Prefer shorter, more specific plan names
+        if let plan = planCandidates.min(by: { $0.count < $1.count }) {
+            fields.append(Field(
+                key: "plan_name",
+                value: plan,
+                confidence: 0.82,
+                source: .vision
+            ))
+        }
+
+        // Extract member names listed with numeric prefixes
+        // Handles both "01 JAY ZENG" (all caps) and "01. Jay Zeng" (title case)
+        let namePattern = #"^\d{1,2}\.?\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)+)"#
+        let nameRegex = try? NSRegularExpression(pattern: namePattern, options: .anchorsMatchLines)
+        var enumeratedNames: [String] = []
+        if let nameRegex {
+            let matches = nameRegex.matches(in: text, range: NSRange(text.startIndex..., in: text))
+            for match in matches {
+                if let range = Range(match.range(at: 1), in: text) {
+                    let name = String(text[range])
+                    // Avoid duplicates
+                    if !enumeratedNames.contains(name) {
+                        enumeratedNames.append(name)
+                    }
+                }
+            }
+        }
+
+        // If we found any enumerated member names, combine them
+        if !enumeratedNames.isEmpty {
+            let combined = enumeratedNames.joined(separator: ", ")
+            fields.append(Field(
+                key: "member_name",
+                value: combined,
+                confidence: enumeratedNames.count > 1 ? 0.82 : 0.78, // Higher confidence for multiple members
                 source: .vision
             ))
         }
@@ -352,7 +664,7 @@ final class IntelligentFieldExtractor {
         var fields: [Field] = []
 
         // Extract account number
-        let accountPattern = "(?:account|acct)[:\\s#]+([0-9-]+)"
+        let accountPattern = "(?:account|acct)[:\\\\s#]+([0-9-]+)"
         if let regex = try? NSRegularExpression(pattern: accountPattern, options: .caseInsensitive),
            let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
            let range = Range(match.range(at: 1), in: text) {
@@ -371,7 +683,7 @@ final class IntelligentFieldExtractor {
         var fields: [Field] = []
 
         // Extract height
-        let heightPattern = "(?:ht|height)[:\\s]+([45]'[\\s]?\\d{1,2}\"?|[45]-\\d{1,2})"
+        let heightPattern = "(?:ht|height)[:\\\\s]+([45]'[\\\\s]?\\\\d{1,2}\"?|[45]-\\\\d{1,2})"
         if let regex = try? NSRegularExpression(pattern: heightPattern, options: .caseInsensitive),
            let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
            let range = Range(match.range(at: 1), in: text) {
@@ -390,7 +702,7 @@ final class IntelligentFieldExtractor {
         var fields: [Field] = []
 
         // Extract RE: or Subject line
-        let subjectPattern = "(?:re|subject|regarding)[:\\s]+([^\\n]{10,100})"
+        let subjectPattern = "(?:re|subject|regarding)[:\\\\s]+([^\\\\n]{10,100})"
         if let regex = try? NSRegularExpression(pattern: subjectPattern, options: .caseInsensitive),
            let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
            let range = Range(match.range(at: 1), in: text) {
@@ -410,7 +722,7 @@ final class IntelligentFieldExtractor {
 
         // Extract transaction ID
         let transactionPatterns = [
-            "(?:transaction|trans|receipt)[:\\s#]+([A-Z0-9-]{6,20})",
+            "(?:transaction|trans|receipt)[:\\\\s#]+([A-Z0-9-]{6,20})",
             "#([A-Z0-9-]{6,20})"
         ]
 
@@ -434,8 +746,8 @@ final class IntelligentFieldExtractor {
     private func extractExpiryDate(from text: String) -> Field? {
         // Look for expiry with context
         let patterns = [
-            "(?:exp(?:iry)?|valid thru|good thru|expires)[:\\s]*([0-9]{1,2}[/-][0-9]{2,4})",
-            "([0-9]{2}[/-][0-9]{2})\\s*(?:exp|expiry|expires)"
+            "(?:exp(?:iry)?|valid thru|good thru|expires)[:\\\\s]*([0-9]{1,2}[/-][0-9]{2,4})",
+            "([0-9]{2}[/-][0-9]{2})\\\\s*(?:exp|expiry|expires)"
         ]
 
         for pattern in patterns {
@@ -456,47 +768,113 @@ final class IntelligentFieldExtractor {
 
     // MARK: - Deduplication and Merging
 
-    private func deduplicateAndMerge(_ fields: [Field]) -> [Field] {
+    private func deduplicateAndMerge(_ fields: [Field], docType: DocumentType) -> [Field] {
         var merged: [String: Field] = [:]
 
         for field in fields {
-            let key = field.key.lowercased()
+            let canonical = canonicalize(field, for: docType)
+            let key = canonical.key.lowercased()
 
             if let existing = merged[key] {
                 // Keep the field with higher confidence
-                if field.confidence > existing.confidence {
-                    merged[key] = field
-                } else if field.confidence == existing.confidence && field.value.count > existing.value.count {
+                if canonical.confidence > existing.confidence {
+                    merged[key] = canonical
+                } else if canonical.confidence == existing.confidence && canonical.value.count > existing.value.count {
                     // If same confidence, prefer longer/more complete value
-                    merged[key] = field
+                    merged[key] = canonical
                 }
             } else {
-                merged[key] = field
+                merged[key] = canonical
             }
         }
 
         return Array(merged.values)
     }
-}
 
-// MARK: - Mock LLM Service for Development
+    private func canonicalize(_ field: Field, for docType: DocumentType) -> Field {
+        let canonicalKey = canonicalKey(for: field.key, docType: docType)
+        let normalizedValue = normalizeValue(field.value, for: canonicalKey)
 
-/// Mock LLM service that simulates responses - replace with real implementation
-final class MockLLMService: LLMService {
-    func extract(prompt: String, text: String) async throws -> String {
-        // Simulate processing delay
-        try await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+        field.key = canonicalKey
+        field.value = normalizedValue
+        if field.originalValue.isEmpty {
+            field.originalValue = normalizedValue
+        }
 
-        // Return empty JSON for now - would be replaced with actual LLM call
-        return "{}"
+        return field
     }
 
-    func cleanText(_ rawText: String) async throws -> String {
-        // Simulate processing delay
-        try await Task.sleep(nanoseconds: 300_000_000) // 0.3 seconds
+    private func canonicalKey(for rawKey: String, docType: DocumentType) -> String {
+        let trimmed = rawKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = trimmed
+            .lowercased()
+            .replacingOccurrences(of: " ", with: "_")
 
-        // Mock: Just return the raw text as-is
-        return rawText
+        switch normalized {
+        case "exp", "exp_date", "expiry", "expiry_date", "expiration", "expiration_date", "valid_thru", "valid_through":
+            return "expiry_date"
+        case "card_number", "cardnumber", "card_no", "card_num", "pan":
+            return docType == .creditCard ? "card_number" : normalized
+        case "cardholder", "card_holder":
+            return docType == .creditCard ? "cardholder" : normalized
+        case "name":
+            if docType == .creditCard { return "cardholder" }
+            if docType == .idCard { return "name" }
+            return normalized
+        case "issuer", "bank", "bank_name":
+            return "issuer"
+        case "card_type", "network":
+            return docType == .creditCard ? "card_type" : normalized
+        default:
+            return normalized
+        }
+    }
+
+    private func normalizeValue(_ value: String, for key: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        switch key {
+        case "card_number":
+            // Strip formatting so deduplication works across sources
+            let digits = trimmed.filter(\.isWholeNumber)
+            return digits.isEmpty ? trimmed : digits
+        case "expiry_date":
+            return CardDetailsExtractor.normalizeExpiry(trimmed)
+        case "issuer", "card_type":
+            return trimmed.capitalized
+        default:
+            return trimmed
+        }
+    }
+
+    private func mapToSchema(_ fields: [Field], docType: DocumentType) -> [Field] {
+        let allowed = allowedKeys(for: docType)
+        guard !allowed.isEmpty else { return fields }
+
+        return fields.compactMap { field in
+            let key = field.key.lowercased()
+            guard allowed.contains(key) else { return nil }
+            return field
+        }
+    }
+
+    private func allowedKeys(for docType: DocumentType) -> Set<String> {
+        switch docType {
+        case .creditCard:
+            return ["cardholder", "card_number", "expiry_date", "issuer", "card_type"]
+        case .insuranceCard:
+            return ["member_name", "member_id", "group_number", "payer_number", "policy_number", "plan_name", "insurance_company", "effective_date", "copay", "phone_number", "rx_bin", "rx_pcn"]
+        case .billStatement:
+            return ["account_number", "statement_date", "due_date", "amount_due", "minimum_payment", "previous_balance", "new_charges", "merchant", "billing_period"]
+        case .idCard:
+            return ["name", "id_number", "date_of_birth", "issue_date", "expiry_date", "address", "issuing_authority", "class", "height", "sex"]
+        case .letter:
+            return ["sender", "sender_address", "recipient", "recipient_address", "date", "subject", "reference_number", "key_dates", "action_required"]
+        case .receipt:
+            return ["merchant", "date", "time", "total", "subtotal", "tax", "payment_method", "last_four", "transaction_id", "items"]
+        case .generic:
+            return []
+        }
     }
 }
 
@@ -704,7 +1082,6 @@ final class LLMServiceFactory {
     enum ServiceType {
         case apple        // On-device Apple Intelligence (iOS 18.2+)
         case openai(apiKey: String)
-        case mock         // For development/testing
         case none         // Disable LLM extraction
     }
 
@@ -721,9 +1098,6 @@ final class LLMServiceFactory {
 
         case .openai(let apiKey):
             return OpenAILLMService(apiKey: apiKey)
-
-        case .mock:
-            return MockLLMService()
 
         case .none:
             return nil

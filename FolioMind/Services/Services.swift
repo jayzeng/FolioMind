@@ -2,7 +2,7 @@
 //  Services.swift
 //  FolioMind
 //
-//  Protocols and mock implementations for analysis, embeddings, linking, and search.
+//  Protocols implementations for analysis, embeddings, linking, and search.
 //
 
 import Foundation

@@ -62,6 +62,11 @@ enum FieldExtractor {
                         // Validate it looks like a phone number
                         let digits = phoneNumber.filter { $0.isNumber }
                         if digits.count >= 10 && digits.count <= 15 {
+                            // Skip numbers that are likely group/policy identifiers
+                            if hasBannedPhoneContext(in: text, range: range) {
+                                continue
+                            }
+
                             // Check context for confidence boost
                             let confidence = phoneContextConfidence(phoneNumber, in: text, range: range)
 
@@ -100,6 +105,20 @@ enum FieldExtractor {
             return 0.75
         }
         return 0.6
+    }
+
+    private static func hasBannedPhoneContext(in text: String, range: Range<String.Index>) -> Bool {
+        let contextRange = max(0, text.distance(from: text.startIndex, to: range.lowerBound) - 30) ..<
+                          min(text.count, text.distance(from: text.startIndex, to: range.upperBound) + 10)
+
+        guard let contextStart = text.index(text.startIndex, offsetBy: contextRange.lowerBound, limitedBy: text.endIndex),
+              let contextEnd = text.index(text.startIndex, offsetBy: contextRange.upperBound, limitedBy: text.endIndex) else {
+            return false
+        }
+
+        let context = String(text[contextStart..<contextEnd]).lowercased()
+        let banned = ["group", "grp", "policy", "claim", "payer", "den grp", "member id"]
+        return banned.contains(where: { context.contains($0) })
     }
 
     // MARK: - Email Extraction
@@ -222,22 +241,27 @@ enum FieldExtractor {
         var fields: [Field] = []
 
         // Multi-line address pattern: street, city, state zip
-        let pattern = "\\d+\\s+[A-Za-z0-9\\s,.]+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr|Court|Ct|Circle|Cir|Way)[^\\n]*(?:\\n|,)[^\\n]+,\\s*[A-Z]{2}\\s+\\d{5}(?:-\\d{4})?"
+        let streetPattern = "\\d+\\s+[A-Za-z0-9\\s,.]+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr|Court|Ct|Circle|Cir|Way)[^\\n]*(?:\\n|,)[^\\n]+,\\s*[A-Z]{2}\\s+\\d{5}(?:-\\d{4})?"
+        let poBoxPattern = "P\\s*O\\.?\\s*Box\\s+\\d+[\\s\\n,]+[A-Za-z\\s]+[\\s\\n,]+[A-Z]{2}\\s+\\d{5}(?:-\\d{4})?(?:\\s+\\d{4})?"
 
-        if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
-            let matches = regex.matches(in: text, range: NSRange(location: 0, length: text.utf16.count))
-            for match in matches {
-                if let range = Range(match.range, in: text) {
-                    let address = String(text[range])
-                        .replacingOccurrences(of: "\n", with: ", ")
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
+        let patterns = [streetPattern, poBoxPattern]
 
-                    fields.append(Field(
-                        key: "address",
-                        value: address,
-                        confidence: 0.75,
-                        source: .vision
-                    ))
+        for pattern in patterns {
+            if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
+                let matches = regex.matches(in: text, range: NSRange(location: 0, length: text.utf16.count))
+                for match in matches {
+                    if let range = Range(match.range, in: text) {
+                        let address = String(text[range])
+                            .replacingOccurrences(of: "\n", with: ", ")
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+                        fields.append(Field(
+                            key: "address",
+                            value: address,
+                            confidence: 0.75,
+                            source: .vision
+                        ))
+                    }
                 }
             }
         }
