@@ -1109,6 +1109,12 @@
         }
       }
     },
+    "Delete Image" : {
+
+    },
+    "Delete Image?" : {
+
+    },
     "Delete recording" : {
 
     },
@@ -3194,6 +3200,9 @@
         }
       }
     },
+    "Rotate Failed" : {
+
+    },
     "Save" : {
       "localizations" : {
         "en" : {
@@ -3546,6 +3555,9 @@
         }
       }
     },
+    "This removes the image from the document." : {
+
+    },
     "This will restore the original value:\n\n\"%@\"" : {
       "localizations" : {
         "en" : {
@@ -3745,6 +3757,7 @@
       }
     },
     "Use the mic to add context or reminders alongside your documents." : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3765,6 +3778,9 @@
           }
         }
       }
+    },
+    "Use the mic to add context or reminders." : {
+
     },
     "Value" : {
       "localizations" : {

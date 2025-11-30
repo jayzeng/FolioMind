@@ -22,16 +22,16 @@ struct SurfaceCard<Content: View>: View {
     var body: some View {
         content
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(16)
+            .padding(14)
             .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .fill(Color(.secondarySystemBackground).opacity(0.9))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
                             .stroke(Color.white.opacity(0.28), lineWidth: 1)
                     )
             )
-            .shadow(color: Color.black.opacity(0.06), radius: 14, y: 8)
+            .shadow(color: Color.black.opacity(0.06), radius: 12, y: 6)
     }
 }
 
@@ -261,11 +261,11 @@ struct ContentView: View {
                     }
 
                     audioSection
-                        .padding(.bottom, 12)
+                        .padding(.bottom, 10)
 
                     if !spotlightSummaries.isEmpty {
                         spotlightSection(spotlightSummaries)
-                            .padding(.bottom, 12)
+                            .padding(.bottom, 10)
                     }
 
                     if showingSearchResults {
@@ -287,10 +287,11 @@ struct ContentView: View {
                     }
                 }
                 .padding(.horizontal, 16)
-                .padding(.top, 8)
+                .padding(.top, 4)
             }
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
             .navigationTitle("FolioMind")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button {
@@ -388,7 +389,7 @@ struct ContentView: View {
 
     private var audioSection: some View {
         SurfaceCard {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 10) {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Audio Notes")
@@ -406,40 +407,40 @@ struct ContentView: View {
                             isRecordingAudio ? "Stop" : "Record",
                             systemImage: isRecordingAudio ? "stop.circle.fill" : "mic.fill"
                         )
-                        .font(.subheadline.weight(.semibold))
+                        .font(.caption.weight(.semibold))
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(isRecordingAudio ? .red : .blue)
-                    .controlSize(.regular)
+                    .controlSize(.small)
                 }
 
                 if isRecordingAudio {
-                    HStack(spacing: 8) {
+                    HStack(spacing: 6) {
                         Image(systemName: "waveform.path")
-                            .font(.subheadline)
+                            .font(.caption)
                             .foregroundStyle(.red)
                         Text("Recording… tap Stop when finished")
-                            .font(.subheadline)
+                            .font(.caption)
                             .foregroundStyle(.primary)
                     }
                 }
 
                 if audioNotes.isEmpty {
-                    HStack(spacing: 10) {
+                    HStack(spacing: 8) {
                         Image(systemName: "waveform.circle")
-                            .font(.system(size: 28))
+                            .font(.system(size: 24))
                             .foregroundStyle(.secondary)
-                        VStack(alignment: .leading, spacing: 4) {
+                        VStack(alignment: .leading, spacing: 3) {
                             Text("Capture quick voice notes")
-                                .font(.subheadline.weight(.semibold))
-                            Text("Use the mic to add context or reminders alongside your documents.")
-                                .font(.caption)
+                                .font(.caption.weight(.semibold))
+                            Text("Use the mic to add context or reminders.")
+                                .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }
                     }
                     .padding(.top, 2)
                 } else {
-                    VStack(spacing: 10) {
+                    VStack(spacing: 8) {
                         ForEach(audioNotes) { note in
                             AudioNoteRow(
                                 note: note,
@@ -554,7 +555,7 @@ struct ContentView: View {
     @ViewBuilder
     private func spotlightSection(_ items: [SpotlightSummary]) -> some View {
         SurfaceCard {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 10) {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("People & Places")

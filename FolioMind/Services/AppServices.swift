@@ -43,7 +43,7 @@ final class AudioRecorderService: NSObject, ObservableObject, AVAudioRecorderDel
     private var recorder: AVAudioRecorder?
     private var currentURL: URL?
     private var recordingStartDate: Date?
-    private let directoryName = "FolioMindRecordings"
+    private let storageManager = FileStorageManager.shared
 
     func startRecording() async throws -> URL {
         guard !isRecording else { throw RecorderError.alreadyRecording }
@@ -128,13 +128,9 @@ final class AudioRecorderService: NSObject, ObservableObject, AVAudioRecorderDel
     }
 
     private func makeRecordingURL() throws -> URL {
-        let fm = FileManager.default
-        let documents = try fm.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-        let directory = documents.appendingPathComponent(directoryName, isDirectory: true)
-        if !fm.fileExists(atPath: directory.path) {
-            try fm.createDirectory(at: directory, withIntermediateDirectories: true)
-        }
-        return directory.appendingPathComponent("\(UUID().uuidString).m4a")
+        let directory = try storageManager.url(for: .recordings)
+        let filename = storageManager.uniqueFilename(withExtension: "m4a")
+        return directory.appendingPathComponent(filename)
     }
 }
 
@@ -254,6 +250,15 @@ final class AppServices: ObservableObject {
             embeddingService: embeddingService
         )
         documentStore = DocumentStore(analyzer: analyzer, embeddingService: embeddingService, llmService: llmService)
+
+        // Migrate existing files to App Group container
+        Task {
+            do {
+                try await FileStorageManager.shared.migrateExistingFiles()
+            } catch {
+                print("⚠️ File migration failed: \(error)")
+            }
+        }
     }
 }
 
@@ -274,7 +279,7 @@ final class DocumentStore {
     private let embeddingService: EmbeddingService
     private let llmService: LLMService?
     private let metadataExtractor: ImageMetadataExtracting
-    private let assetDirectoryName = "FolioMindAssets"
+    private let storageManager = FileStorageManager.shared
 
     init(
         analyzer: DocumentAnalyzer,
@@ -413,33 +418,10 @@ final class DocumentStore {
         return trimmed
     }
 
-    /// Copy an asset into a persistent app Documents subdirectory and return its new URL.
+    /// Copy an asset into a persistent shared container subdirectory and return its new URL.
     private func persistAsset(from url: URL) throws -> URL {
-        let fm = FileManager.default
-        let destDir = try ensureAssetDirectory()
-        let destination = destDir.appendingPathComponent("\(UUID().uuidString)\(url.pathExtension.isEmpty ? "" : ".")\(url.pathExtension)")
-
-        // If the source is already in our destination directory, skip the copy
-        if url.deletingLastPathComponent() == destDir {
-            return url
-        }
-
-        // Avoid duplicating files if an identical name exists
-        if !fm.fileExists(atPath: destination.path) {
-            try fm.copyItem(at: url, to: destination)
-        }
-
-        return destination
-    }
-
-    private func ensureAssetDirectory() throws -> URL {
-        let fm = FileManager.default
-        let documents = try fm.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-        let dir = documents.appendingPathComponent(assetDirectoryName, isDirectory: true)
-        if !fm.fileExists(atPath: dir.path) {
-            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
-        }
-        return dir
+        let filename = storageManager.uniqueFilename(withExtension: url.pathExtension)
+        return try storageManager.copy(from: url, to: .assets, filename: filename)
     }
 
     /// Re-run extraction for an existing document using its current image assets.

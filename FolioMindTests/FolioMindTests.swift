@@ -524,6 +524,45 @@ struct FolioMindTests {
         #expect(result == .billStatement)
     }
 
+    @Test func classifierDetectsUtilityBillingStatement() {
+        let text = """
+        Seattle Electric Service
+        Account Number 123456789
+        Billing Period 10/01/2024 - 10/31/2024
+        Current Charges $120.45
+        Total Due $120.45
+        Due By 11/20/2024
+        Usage 450 kWh
+        """
+        let result = DocumentTypeClassifier.classify(
+            ocrText: text,
+            fields: [],
+            hinted: nil,
+            defaultType: .generic
+        )
+        #expect(result == .billStatement)
+    }
+
+    @Test func classifierTreatsRetailReceiptAsReceiptNotCard() {
+        let text = """
+        ROSS
+        DRESS FOR LESS
+        Receipt # 2442-02-2853-5333-1
+        Subtotal: $22.99
+        Sales Tax (10.350%): $2.38
+        Total: $25.37
+        Payment Method: Cash
+        Date: 11/29/25 12:16:29 PM
+        """
+        let result = DocumentTypeClassifier.classify(
+            ocrText: text,
+            fields: [],
+            hinted: nil,
+            defaultType: .generic
+        )
+        #expect(result == .receipt)
+    }
+
     @MainActor
     @Test func reminderManagerSuggestsCreditCardRenewal() {
         let manager = ReminderManager()
@@ -712,8 +751,8 @@ struct FolioMindTests {
 
     @Test func documentTypeHasDisplayNames() {
         #expect(DocumentType.creditCard.displayName == "Credit Card")
-        #expect(DocumentType.insuranceCard.displayName == "Insurance")
-        #expect(DocumentType.billStatement.displayName == "Statement")
+        #expect(DocumentType.insuranceCard.displayName == "Insurance Card")
+        #expect(DocumentType.billStatement.displayName == "Bill Statement")
         #expect(DocumentType.receipt.displayName == "Receipt")
         #expect(DocumentType.generic.displayName == "Document")
     }
@@ -722,6 +761,25 @@ struct FolioMindTests {
         for docType in DocumentType.allCases {
             #expect(!docType.symbolName.isEmpty)
         }
+    }
+
+    @Test func classifierDetectsReceiptFromPurchaseText() {
+        let text = """
+        City Market
+        Item A 9.99
+        Item B 4.50
+        Subtotal $14.49
+        Sales Tax $1.20
+        Total $15.69
+        Thank you for shopping!
+        """
+        let result = DocumentTypeClassifier.classify(
+            ocrText: text,
+            fields: [],
+            hinted: nil,
+            defaultType: .generic
+        )
+        #expect(result == .receipt)
     }
 
     @Test func assetTypeHasIcons() {

@@ -93,18 +93,8 @@ struct DocumentDetailPageView: View {
                 }
 
                 // Content based on selected tab
-                TabView(selection: $selectedTab) {
-                    overviewTab
-                        .tag(DetailTab.overview)
-
-                    detailsTab
-                        .tag(DetailTab.details)
-
-                    ocrTab
-                        .tag(DetailTab.ocr)
-                }
-                .tabViewStyle(.page(indexDisplayMode: .never))
-                .frame(height: 1200)
+                tabContent
+                    .animation(.easeInOut, value: selectedTab)
             }
         }
         .background(Color(.systemGroupedBackground).ignoresSafeArea())
@@ -165,7 +155,12 @@ struct DocumentDetailPageView: View {
         }
         .fullScreenCover(isPresented: $showFullScreenImage) {
             if let url = imageURL {
-                FullScreenImageViewer(imageURL: url)
+                FullScreenImageViewer(
+                    imageURL: url,
+                    onDelete: {
+                        deleteCurrentAsset()
+                    }
+                )
             }
         }
         .alert("Delete Document", isPresented: $showDeleteAlert) {
@@ -392,6 +387,18 @@ struct DocumentDetailPageView: View {
         }
         .padding(.top, 16)
         .background(Color(.systemGroupedBackground))
+    }
+
+    @ViewBuilder
+    private var tabContent: some View {
+        switch selectedTab {
+        case .overview:
+            overviewTab
+        case .details:
+            detailsTab
+        case .ocr:
+            ocrTab
+        }
     }
 
     // MARK: - Overview Tab
@@ -1004,6 +1011,48 @@ struct DocumentDetailPageView: View {
         modelContext.delete(document)
         try? modelContext.save()
         dismiss()
+    }
+
+    private func deleteCurrentAsset() {
+        guard let asset = currentAsset else { return }
+
+        // Remove from disk if present
+        let fm = FileManager.default
+        if fm.fileExists(atPath: asset.fileURL) {
+            try? fm.removeItem(atPath: asset.fileURL)
+        }
+
+        // Remove from data model
+        if let idx = document.assets.firstIndex(where: { $0.id == asset.id }) {
+            document.assets.remove(at: idx)
+        }
+        modelContext.delete(asset)
+
+        resequenceImagePages()
+        try? modelContext.save()
+
+        let remainingAssets = document.imageAssets
+        if remainingAssets.isEmpty {
+            selectedAssetIndex = 0
+            showFullScreenImage = false
+        } else {
+            selectedAssetIndex = min(selectedAssetIndex, remainingAssets.count - 1)
+        }
+
+        showAssetNotice(StatusNotice(
+            title: "Image deleted",
+            subtitle: remainingAssets.isEmpty ? "Add images to continue" : "Removed from document",
+            systemImage: "trash.fill",
+            tint: .red,
+            isProgress: false
+        ), autoHide: 2.5)
+    }
+
+    private func resequenceImagePages() {
+        let sorted = document.imageAssets
+        for (index, asset) in sorted.enumerated() {
+            asset.pageNumber = index
+        }
     }
 
     private func addNewAssets(from items: [PhotosPickerItem]) async {

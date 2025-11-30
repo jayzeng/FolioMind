@@ -54,24 +54,18 @@ struct DocumentScannerView: UIViewControllerRepresentable {
 
         func documentCameraViewController(_ controller: VNDocumentCameraViewController, didFinishWith scan: VNDocumentCameraScan) {
             var urls: [URL] = []
-            let fm = FileManager.default
-            let dir: URL
-            if let docs = try? fm.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true) {
-                let assetsDir = docs.appendingPathComponent("FolioMindAssets", isDirectory: true)
-                try? fm.createDirectory(at: assetsDir, withIntermediateDirectories: true)
-                dir = assetsDir
-            } else {
-                dir = fm.temporaryDirectory
-            }
+            let storageManager = FileStorageManager.shared
 
             for page in 0..<scan.pageCount {
                 let image = scan.imageOfPage(at: page)
                 guard let data = image.jpegData(compressionQuality: 0.9) else { continue }
-                let url = dir.appendingPathComponent(UUID().uuidString).appendingPathExtension("jpg")
+                let filename = storageManager.uniqueFilename(withExtension: "jpg")
+
                 do {
-                    try data.write(to: url)
+                    let url = try storageManager.save(data, to: .assets, filename: filename)
                     urls.append(url)
                 } catch {
+                    print("Failed to save scanned page: \(error)")
                     continue
                 }
             }
