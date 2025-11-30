@@ -6,7 +6,137 @@
 //
 
 import Foundation
+import AVFoundation
 import SwiftData
+
+struct AudioRecordingResult {
+    let url: URL
+    let startedAt: Date
+    let duration: TimeInterval
+}
+
+@MainActor
+final class AudioRecorderService: NSObject, ObservableObject, AVAudioRecorderDelegate {
+    enum RecorderError: LocalizedError {
+        case permissionDenied
+        case alreadyRecording
+        case noActiveRecording
+        case configurationFailed(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .permissionDenied:
+                return "Microphone access is needed to record audio."
+            case .alreadyRecording:
+                return "Recording is already in progress."
+            case .noActiveRecording:
+                return "No recording is currently in progress."
+            case .configurationFailed(let message):
+                return "Could not start recording: \(message)"
+            }
+        }
+    }
+
+    @Published private(set) var isRecording = false
+    @Published private(set) var lastError: String?
+
+    private var recorder: AVAudioRecorder?
+    private var currentURL: URL?
+    private var recordingStartDate: Date?
+    private let directoryName = "FolioMindRecordings"
+
+    func startRecording() async throws -> URL {
+        guard !isRecording else { throw RecorderError.alreadyRecording }
+        lastError = nil
+
+        let session = AVAudioSession.sharedInstance()
+        let granted = try await requestPermission(session: session)
+        guard granted else { throw RecorderError.permissionDenied }
+
+        do {
+            try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker, .allowBluetooth])
+            try session.setActive(true, options: .notifyOthersOnDeactivation)
+        } catch {
+            lastError = error.localizedDescription
+            throw RecorderError.configurationFailed(error.localizedDescription)
+        }
+
+        let url = try makeRecordingURL()
+        let settings: [String: Any] = [
+            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+            AVSampleRateKey: 44_100,
+            AVNumberOfChannelsKey: 1,
+            AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
+        ]
+
+        do {
+            recorder = try AVAudioRecorder(url: url, settings: settings)
+            recorder?.delegate = self
+            guard recorder?.record() == true else {
+                lastError = "Unable to start microphone recording."
+                throw RecorderError.configurationFailed("Unable to start microphone recording.")
+            }
+            currentURL = url
+            recordingStartDate = Date()
+            isRecording = true
+            return url
+        } catch {
+            lastError = error.localizedDescription
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            throw RecorderError.configurationFailed(error.localizedDescription)
+        }
+    }
+
+    func stopRecording() throws -> AudioRecordingResult {
+        guard isRecording, let recorder, let url = currentURL, let startedAt = recordingStartDate else {
+            throw RecorderError.noActiveRecording
+        }
+
+        let duration = recorder.currentTime
+        recorder.stop()
+        self.recorder = nil
+        currentURL = nil
+        recordingStartDate = nil
+        isRecording = false
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+
+        return AudioRecordingResult(url: url, startedAt: startedAt, duration: duration)
+    }
+
+    func audioRecorderEncodeErrorDidOccur(_ recorder: AVAudioRecorder, error: Error?) {
+        _ = recorder
+        if let error {
+            lastError = error.localizedDescription
+        }
+    }
+
+    private func requestPermission(session: AVAudioSession) async throws -> Bool {
+        switch session.recordPermission {
+        case .granted:
+            return true
+        case .denied:
+            return false
+        case .undetermined:
+            return await withCheckedContinuation { continuation in
+                session.requestRecordPermission { granted in
+                    continuation.resume(returning: granted)
+                }
+            }
+        @unknown default:
+            return false
+        }
+    }
+
+    private func makeRecordingURL() throws -> URL {
+        let fm = FileManager.default
+        let documents = try fm.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        let directory = documents.appendingPathComponent(directoryName, isDirectory: true)
+        if !fm.fileExists(atPath: directory.path) {
+            try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+        return directory.appendingPathComponent("\(UUID().uuidString).m4a")
+    }
+}
 
 @MainActor
 final class AppServices: ObservableObject {
@@ -17,6 +147,9 @@ final class AppServices: ObservableObject {
     let embeddingService: EmbeddingService
     let linkingEngine: LinkingEngine
     let reminderManager: ReminderManager
+    let audioRecorder: AudioRecorderService
+    let audioNoteManager: AudioNoteManager
+    let llmService: LLMService?
 
     init() {
         let schema = Schema([
@@ -27,7 +160,8 @@ final class AppServices: ObservableObject {
             FaceCluster.self,
             Embedding.self,
             DocumentPersonLink.self,
-            DocumentReminder.self
+            DocumentReminder.self,
+            AudioNote.self
         ])
         let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 
@@ -110,6 +244,9 @@ final class AppServices: ObservableObject {
         embeddingService = SimpleEmbeddingService()
         linkingEngine = BasicLinkingEngine()
         reminderManager = ReminderManager()
+        audioRecorder = AudioRecorderService()
+        audioNoteManager = AudioNoteManager(llmService: llmService)
+        self.llmService = llmService
 
         let modelContext = ModelContext(modelContainer)
         searchEngine = HybridSearchEngine(
@@ -136,12 +273,19 @@ final class DocumentStore {
     private let analyzer: DocumentAnalyzer
     private let embeddingService: EmbeddingService
     private let llmService: LLMService?
+    private let metadataExtractor: ImageMetadataExtracting
     private let assetDirectoryName = "FolioMindAssets"
 
-    init(analyzer: DocumentAnalyzer, embeddingService: EmbeddingService, llmService: LLMService? = nil) {
+    init(
+        analyzer: DocumentAnalyzer,
+        embeddingService: EmbeddingService,
+        llmService: LLMService? = nil,
+        metadataExtractor: ImageMetadataExtracting = ImageMetadataExtractor()
+    ) {
         self.analyzer = analyzer
         self.embeddingService = embeddingService
         self.llmService = llmService
+        self.metadataExtractor = metadataExtractor
     }
 
     func createStubDocument(in context: ModelContext, titleSuffix: Int) async throws -> Document {
@@ -179,7 +323,7 @@ final class DocumentStore {
         hints: DocumentHints? = nil,
         title: String? = nil,
         location: String? = nil,
-        capturedAt: Date? = Date(),
+        capturedAt: Date? = nil,
         in context: ModelContext
     ) async throws -> Document {
         guard !imageURLs.isEmpty else {
@@ -188,6 +332,12 @@ final class DocumentStore {
 
         // Persist assets into Documents/FolioMindAssets so they survive rebuilds/restarts
         let persistentURLs = try imageURLs.map { try persistAsset(from: $0) }
+
+        let metadataSnapshots = persistentURLs.map { metadataExtractor.extract(from: $0) }
+        let metadataLocation = metadataSnapshots
+            .compactMap { cleanedLocation($0.locationDescription) }
+            .first
+        let metadataCaptureDate = metadataSnapshots.compactMap { $0.captureDate }.sorted().first
 
         var analyses: [DocumentAnalysisResult] = []
         for url in persistentURLs {
@@ -240,8 +390,8 @@ final class DocumentStore {
             cleanedText: cleanedText,
             fields: combinedFields,
             createdAt: Date(),
-            capturedAt: capturedAt,
-            location: location,
+            capturedAt: capturedAt ?? metadataCaptureDate ?? Date(),
+            location: cleanedLocation(location) ?? metadataLocation,
             assets: assets,
             personLinks: [],
             faceClusterIDs: faceIDs
@@ -255,6 +405,13 @@ final class DocumentStore {
     }
 
     // MARK: - Asset Persistence
+
+    private func cleanedLocation(_ location: String?) -> String? {
+        guard let trimmed = location?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+            return nil
+        }
+        return trimmed
+    }
 
     /// Copy an asset into a persistent app Documents subdirectory and return its new URL.
     private func persistAsset(from url: URL) throws -> URL {

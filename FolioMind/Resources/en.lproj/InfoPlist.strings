@@ -1,0 +1,7 @@
+/* Permission Descriptions - English */
+
+"NSCalendarsUsageDescription" = "Allow FolioMind to add follow-up events to your calendar.";
+"NSCameraUsageDescription" = "Allow FolioMind to scan documents and capture photos for analysis.";
+"NSMicrophoneUsageDescription" = "Allow FolioMind to record audio notes.";
+"NSPhotoLibraryUsageDescription" = "Allow FolioMind to import photos or scans for document analysis.";
+"NSRemindersUsageDescription" = "Allow FolioMind to create reminders for due dates and follow-ups.";

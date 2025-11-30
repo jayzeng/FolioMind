@@ -89,7 +89,8 @@ struct SimpleEmbeddingService: EmbeddingService {
     }
 
     func embedDocument(_ document: Document) async throws -> Embedding {
-        let text = document.title + " " + document.ocrText
+        let locationText = document.location ?? ""
+        let text = [document.title, document.ocrText, locationText].joined(separator: " ")
         return Embedding(
             vector: vector(from: text),
             source: .mock,
@@ -186,7 +187,8 @@ final class HybridSearchEngine: SearchEngine {
 
     private static func keywordScore(document: Document, query: String) -> Double {
         guard !query.isEmpty else { return 1.0 }
-        let haystack = (document.title + " " + document.ocrText).lowercased()
+        let locationText = document.location ?? ""
+        let haystack = (document.title + " " + document.ocrText + " " + locationText).lowercased()
         let tokens = query.lowercased().split(whereSeparator: { $0.isWhitespace || $0.isPunctuation })
         guard !tokens.isEmpty else { return 0 }
         let matches = tokens.filter { haystack.contains($0) }.count

@@ -68,6 +68,15 @@ final class MockSearchEngine: SearchEngine {
     }
 }
 
+struct MockMetadataExtractor: ImageMetadataExtracting {
+    let locationDescription: String?
+    let captureDate: Date?
+
+    func extract(from imageURL: URL) -> ImageMetadata {
+        ImageMetadata(locationDescription: locationDescription, captureDate: captureDate)
+    }
+}
+
 struct FolioMindTests {
 
     @Test func documentDefaults() {
@@ -101,7 +110,8 @@ struct FolioMindTests {
             FaceCluster.self,
             Embedding.self,
             DocumentPersonLink.self,
-            DocumentReminder.self
+            DocumentReminder.self,
+            AudioNote.self
         ])
         let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
         let container = try ModelContainer(for: schema, configurations: [configuration])
@@ -131,7 +141,8 @@ struct FolioMindTests {
             FaceCluster.self,
             Embedding.self,
             DocumentPersonLink.self,
-            DocumentReminder.self
+            DocumentReminder.self,
+            AudioNote.self
         ])
         let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
         let container = try ModelContainer(for: schema, configurations: [configuration])
@@ -158,7 +169,8 @@ struct FolioMindTests {
             FaceCluster.self,
             Embedding.self,
             DocumentPersonLink.self,
-            DocumentReminder.self
+            DocumentReminder.self,
+            AudioNote.self
         ])
         let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
         let container = try ModelContainer(for: schema, configurations: [configuration])
@@ -197,7 +209,7 @@ struct FolioMindTests {
     }
 
     @MainActor
-    @Test func ingestDocumentsMergesOCRAcrossPages() async throws {
+    @Test func searchFindsDocumentsByLocationMetadata() async throws {
         let schema = Schema([
             Document.self,
             Asset.self,
@@ -207,6 +219,47 @@ struct FolioMindTests {
             Embedding.self,
             DocumentPersonLink.self,
             DocumentReminder.self
+        ])
+        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+        let container = try ModelContainer(for: schema, configurations: [configuration])
+        let context = ModelContext(container)
+
+        let doc = Document(title: "Boarding Pass", docType: .generic, ocrText: "")
+        doc.location = "Seattle, WA"
+        let emb = Embedding(
+            vector: [0.1, 0.1, 0.1],
+            source: .mock,
+            entityType: .document,
+            entityID: doc.id
+        )
+
+        context.insert(doc)
+        context.insert(emb)
+        doc.embedding = emb
+        try context.save()
+
+        let search = HybridSearchEngine(
+            modelContext: context,
+            embeddingService: SimpleEmbeddingService(),
+            keywordWeight: 0.8,
+            semanticWeight: 0.2
+        )
+        let results = try await search.search(SearchQuery(text: "Seattle"))
+        #expect(results.first?.document.id == doc.id)
+    }
+
+    @MainActor
+    @Test func ingestDocumentsMergesOCRAcrossPages() async throws {
+        let schema = Schema([
+            Document.self,
+            Asset.self,
+            Person.self,
+            Field.self,
+            FaceCluster.self,
+            Embedding.self,
+            DocumentPersonLink.self,
+            DocumentReminder.self,
+            AudioNote.self
         ])
         let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
         let container = try ModelContainer(for: schema, configurations: [configuration])
@@ -229,6 +282,44 @@ struct FolioMindTests {
 
         #expect(doc.ocrText.contains("page1"))
         #expect(doc.ocrText.contains("page2"))
+    }
+
+    @MainActor
+    @Test func ingestDocumentsAppliesMetadataLocationAndCaptureDate() async throws {
+        let schema = Schema([
+            Document.self,
+            Asset.self,
+            Person.self,
+            Field.self,
+            FaceCluster.self,
+            Embedding.self,
+            DocumentPersonLink.self,
+            DocumentReminder.self
+        ])
+        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+        let container = try ModelContainer(for: schema, configurations: [configuration])
+        let context = ModelContext(container)
+
+        let metadataDate = Date(timeIntervalSince1970: 1_700_000_000)
+        let store = DocumentStore(
+            analyzer: TestDocumentAnalyzer(),
+            embeddingService: SimpleEmbeddingService(),
+            llmService: nil,
+            metadataExtractor: MockMetadataExtractor(
+                locationDescription: "37.7749, -122.4194",
+                captureDate: metadataDate
+            )
+        )
+
+        let doc = try await store.ingestDocuments(
+            from: [URL(fileURLWithPath: "/tmp/page1.png")],
+            hints: nil,
+            title: "Metadata Doc",
+            in: context
+        )
+
+        #expect(doc.location == "37.7749, -122.4194")
+        #expect(doc.capturedAt == metadataDate)
     }
 
     @Test func classifierDetectsCreditCard() {
@@ -518,7 +609,8 @@ struct FolioMindTests {
             FaceCluster.self,
             Embedding.self,
             DocumentPersonLink.self,
-            DocumentReminder.self
+            DocumentReminder.self,
+            AudioNote.self
         ])
         let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
         let container = try ModelContainer(for: schema, configurations: [configuration])
@@ -555,7 +647,8 @@ struct FolioMindTests {
             FaceCluster.self,
             Embedding.self,
             DocumentPersonLink.self,
-            DocumentReminder.self
+            DocumentReminder.self,
+            AudioNote.self
         ])
         let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
         let container = try ModelContainer(for: schema, configurations: [configuration])

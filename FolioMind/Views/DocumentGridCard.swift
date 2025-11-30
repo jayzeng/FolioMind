@@ -23,6 +23,7 @@ struct DocumentGridCard: View {
     @State private var cachedDate: Date?
     @State private var cachedOCRText: String = ""
     @State private var cachedFields: [DisplayField] = []
+    @State private var cachedLocation: String?
 
     private var safeDocType: DocumentType {
         cachedDocType ?? .generic
@@ -168,6 +169,17 @@ struct DocumentGridCard: View {
                 }
                 .foregroundStyle(.secondary)
 
+                if let location = cachedLocation {
+                    HStack(spacing: 4) {
+                        Image(systemName: "mappin.and.ellipse")
+                            .font(.system(size: 10))
+                        Text(location)
+                            .font(.caption2)
+                            .lineLimit(1)
+                    }
+                    .foregroundStyle(.secondary)
+                }
+
                 // Match score if searching
                 if let score = score {
                     let matchPercent = Int((score.keyword * 0.6 + score.semantic * 0.4) * 100)
@@ -203,6 +215,7 @@ struct DocumentGridCard: View {
         cachedTitle = document.title
         cachedDate = document.capturedAt ?? document.createdAt
         cachedOCRText = document.ocrText
+        cachedLocation = cleanedLocation(document.location)
         cachedFields = document.fields.map {
             DisplayField(key: $0.key, value: $0.value, confidence: $0.confidence)
         }
@@ -211,6 +224,13 @@ struct DocumentGridCard: View {
     private func loadImage(from url: URL) -> UIImage? {
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         return UIImage(contentsOfFile: url.path)
+    }
+
+    private func cleanedLocation(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+            return nil
+        }
+        return trimmed
     }
 }
 

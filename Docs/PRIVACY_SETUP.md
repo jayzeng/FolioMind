@@ -14,17 +14,27 @@ FolioMind requires several privacy permissions to function properly. Follow thes
 **Description:** "FolioMind needs camera access to scan documents using the built-in document scanner."
 **Why:** Required for VisionKit document scanning
 
-### 3. Reminders Access
+### 3. Microphone Access
+**Key:** `NSMicrophoneUsageDescription`
+**Description:** "FolioMind needs microphone access to capture audio notes alongside documents."
+**Why:** Allows recording quick audio notes about documents or reminders
+
+### 4. Speech Recognition
+**Key:** `NSSpeechRecognitionUsageDescription`
+**Description:** "FolioMind needs speech recognition to transcribe and summarize your audio notes."
+**Why:** Enables on-device transcription of recorded notes for summaries
+
+### 5. Reminders Access
 **Key:** `NSRemindersUsageDescription`
 **Description:** "FolioMind needs access to Reminders to create and manage document-related reminders and follow-ups."
 **Why:** Allows users to set reminders for document actions (payments, renewals, appointments)
 
-### 4. Calendar Access
+### 6. Calendar Access
 **Key:** `NSCalendarsUsageDescription`
 **Description:** "FolioMind needs access to your calendar to create events for document-related appointments."
 **Why:** Optional calendar event creation for insurance appointments, etc.
 
-### 5. Photo Library Add Usage
+### 7. Photo Library Add Usage
 **Key:** `NSPhotoLibraryAddUsageDescription`
 **Description:** "FolioMind needs permission to save scanned documents to your photo library."
 **Why:** Allows saving scanned documents back to Photos
@@ -55,6 +65,10 @@ If your project has an Info.plist file, you can add these keys directly:
 <string>FolioMind needs access to your photo library to import and save document images.</string>
 <key>NSCameraUsageDescription</key>
 <string>FolioMind needs camera access to scan documents using the built-in document scanner.</string>
+<key>NSMicrophoneUsageDescription</key>
+<string>FolioMind needs microphone access to capture audio notes alongside documents.</string>
+<key>NSSpeechRecognitionUsageDescription</key>
+<string>FolioMind needs speech recognition to transcribe and summarize your audio notes.</string>
 <key>NSRemindersUsageDescription</key>
 <string>FolioMind needs access to Reminders to create and manage document-related reminders and follow-ups.</string>
 <key>NSCalendarsUsageDescription</key>

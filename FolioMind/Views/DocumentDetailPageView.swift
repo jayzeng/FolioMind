@@ -22,6 +22,7 @@ struct DocumentDetailPageView: View {
     @State private var showEditOCRSheet: Bool = false
     @State private var copiedField: String?
     @State private var showAddReminderSheet: Bool = false
+    @State private var reminderToEdit: DocumentReminder?
     @State private var showPermissionAlert: Bool = false
     @State private var showShareSheet: Bool = false
     @State private var showRawText: Bool = false  // Toggle between cleaned and raw text
@@ -671,6 +672,9 @@ struct DocumentDetailPageView: View {
                                 Task {
                                     await deleteReminder(reminder)
                                 }
+                            },
+                            onEdit: {
+                                reminderToEdit = reminder
                             }
                         )
                     }
@@ -685,7 +689,22 @@ struct DocumentDetailPageView: View {
                     onSave: { newReminder in
                         document.reminders.append(newReminder)
                         try? modelContext.save()
-                    }
+                    },
+                    onUpdate: nil,
+                    reminderToEdit: nil
+                )
+            }
+        }
+        .sheet(item: $reminderToEdit) { reminder in
+            if let reminderManager = reminderManager {
+                AddReminderSheet(
+                    document: document,
+                    reminderManager: reminderManager,
+                    onSave: { _ in },
+                    onUpdate: { _ in
+                        try? modelContext.save()
+                    },
+                    reminderToEdit: reminder
                 )
             }
         }
@@ -1880,6 +1899,7 @@ struct ReminderRow: View {
     let reminder: DocumentReminder
     let onToggle: () -> Void
     let onDelete: () -> Void
+    let onEdit: () -> Void
 
     @State private var showDeleteConfirmation = false
 
@@ -1929,12 +1949,20 @@ struct ReminderRow: View {
 
             Spacer()
 
-            // Delete button
-            Button {
-                showDeleteConfirmation = true
-            } label: {
-                Image(systemName: "trash")
-                    .foregroundStyle(.red)
+            HStack(spacing: 12) {
+                Button {
+                    onEdit()
+                } label: {
+                    Image(systemName: "pencil")
+                        .foregroundStyle(.blue)
+                }
+
+                Button {
+                    showDeleteConfirmation = true
+                } label: {
+                    Image(systemName: "trash")
+                        .foregroundStyle(.red)
+                }
             }
         }
         .padding(12)
@@ -1989,6 +2017,8 @@ struct AddReminderSheet: View {
     let document: Document
     let reminderManager: ReminderManager
     let onSave: (DocumentReminder) -> Void
+    let onUpdate: ((DocumentReminder) -> Void)?
+    let reminderToEdit: DocumentReminder?
 
     @State private var selectedSuggestion: ReminderSuggestion?
     @State private var customTitle: String = ""
@@ -2000,6 +2030,10 @@ struct AddReminderSheet: View {
     @State private var errorMessage: String?
     @State private var showPermissionAlert: Bool = false
 
+    private var isEditing: Bool {
+        reminderToEdit != nil
+    }
+
     private var suggestions: [ReminderSuggestion] {
         reminderManager.suggestReminders(for: document)
     }
@@ -2007,7 +2041,7 @@ struct AddReminderSheet: View {
     var body: some View {
         NavigationStack {
             List {
-                if !suggestions.isEmpty && !showCustomForm {
+                if !isEditing && !suggestions.isEmpty && !showCustomForm {
                     Section {
                         ForEach(suggestions) { suggestion in
                             SuggestionRow(
@@ -2029,11 +2063,11 @@ struct AddReminderSheet: View {
                         } label: {
                             Label("Create Custom Reminder", systemImage: "plus.circle.fill")
                         }
-                    }
-                } else {
-                    Section {
-                        TextField("Title", text: $customTitle)
-                            .textInputAutocapitalization(.sentences)
+                }
+            } else {
+                Section {
+                    TextField("Title", text: $customTitle)
+                        .textInputAutocapitalization(.sentences)
 
                         TextField("Notes (optional)", text: $customNotes, axis: .vertical)
                             .textInputAutocapitalization(.sentences)
@@ -2054,7 +2088,7 @@ struct AddReminderSheet: View {
                         Text("Custom Reminder")
                     }
 
-                    if !suggestions.isEmpty {
+                    if !suggestions.isEmpty && !isEditing {
                         Section {
                             Button {
                                 showCustomForm = false
@@ -2077,7 +2111,7 @@ struct AddReminderSheet: View {
                     }
                 }
             }
-            .navigationTitle("Add Reminder")
+            .navigationTitle(isEditing ? "Edit Reminder" : "Add Reminder")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -2087,7 +2121,7 @@ struct AddReminderSheet: View {
                 }
 
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Add") {
+                    Button(isEditing ? "Save" : "Add") {
                         Task {
                             await createReminder()
                         }
@@ -2100,9 +2134,16 @@ struct AddReminderSheet: View {
                 if suggestions.isEmpty {
                     showCustomForm = true
                 }
+                if let editingReminder = reminderToEdit {
+                    showCustomForm = true
+                    customTitle = editingReminder.title
+                    customNotes = editingReminder.notes
+                    customDate = editingReminder.dueDate
+                    customType = editingReminder.reminderType
+                }
             }
             .task {
-                await preflightPermission()
+                _ = await ensurePermission()
             }
             .alert("Reminders Access Needed", isPresented: $showPermissionAlert) {
                 Button("Open Settings") {
@@ -2118,7 +2159,7 @@ struct AddReminderSheet: View {
     }
 
     private var canCreate: Bool {
-        if showCustomForm || suggestions.isEmpty {
+        if isEditing || showCustomForm || suggestions.isEmpty {
             return !customTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         } else {
             return selectedSuggestion != nil
@@ -2141,13 +2182,7 @@ struct AddReminderSheet: View {
         errorMessage = nil
 
         do {
-            // Request permission first
-            let hasPermission = await reminderManager.requestPermission()
-            guard hasPermission else {
-                errorMessage = "Permission denied. Please enable Reminders access in Settings."
-                await MainActor.run {
-                    showPermissionAlert = true
-                }
+            guard await ensurePermission() else {
                 isCreating = false
                 return
             }
@@ -2158,7 +2193,7 @@ struct AddReminderSheet: View {
             let type: ReminderType
             let priority: Int
 
-            if let suggestion = selectedSuggestion {
+            if let suggestion = selectedSuggestion, !isEditing {
                 title = suggestion.title
                 notes = suggestion.notes
                 dueDate = suggestion.dueDate
@@ -2172,26 +2207,12 @@ struct AddReminderSheet: View {
                 priority = 5 // Medium
             }
 
-            // Create in EventKit
-            let eventKitID = try await reminderManager.createReminder(
-                title: title,
-                notes: notes.isEmpty ? nil : notes,
-                dueDate: dueDate,
-                priority: priority
-            )
-
-            // Create our model
-            let reminder = DocumentReminder(
-                title: title,
-                notes: notes,
-                dueDate: dueDate,
-                reminderType: type,
-                isCompleted: false,
-                eventKitID: eventKitID
-            )
-
-            modelContext.insert(reminder)
-            onSave(reminder)
+            if let editingReminder = reminderToEdit {
+                try await updateExistingReminder(editingReminder, title: title, notes: notes, dueDate: dueDate, type: type, priority: priority)
+                onUpdate?(editingReminder)
+            } else {
+                try await createNewReminder(title: title, notes: notes, dueDate: dueDate, type: type, priority: priority)
+            }
 
             isCreating = false
             dismiss()
@@ -2199,6 +2220,87 @@ struct AddReminderSheet: View {
             errorMessage = error.localizedDescription
             isCreating = false
         }
+    }
+
+    @MainActor
+    private func ensurePermission() async -> Bool {
+        let hasPermission = await reminderManager.requestPermission()
+        if !hasPermission {
+            errorMessage = "Permission denied. Please enable Reminders access in Settings."
+            showPermissionAlert = true
+        }
+        return hasPermission
+    }
+
+    private func createNewReminder(
+        title: String,
+        notes: String,
+        dueDate: Date,
+        type: ReminderType,
+        priority: Int
+    ) async throws {
+        let eventKitID = try await reminderManager.createReminder(
+            title: title,
+            notes: notes.isEmpty ? nil : notes,
+            dueDate: dueDate,
+            priority: priority
+        )
+
+        let reminder = DocumentReminder(
+            title: title,
+            notes: notes,
+            dueDate: dueDate,
+            reminderType: type,
+            isCompleted: false,
+            eventKitID: eventKitID
+        )
+
+        modelContext.insert(reminder)
+        onSave(reminder)
+    }
+
+    private func updateExistingReminder(
+        _ reminder: DocumentReminder,
+        title: String,
+        notes: String,
+        dueDate: Date,
+        type: ReminderType,
+        priority: Int
+    ) async throws {
+        // Update EventKit if we still have an identifier; otherwise create a new one
+        if let eventKitID = reminder.eventKitID {
+            do {
+                try await reminderManager.updateReminder(
+                    eventKitID: eventKitID,
+                    title: title,
+                    notes: notes.isEmpty ? nil : notes,
+                    dueDate: dueDate,
+                    priority: priority
+                )
+            } catch ReminderManager.ReminderError.notFound {
+                let newID = try await reminderManager.createReminder(
+                    title: title,
+                    notes: notes.isEmpty ? nil : notes,
+                    dueDate: dueDate,
+                    priority: priority
+                )
+                reminder.eventKitID = newID
+            }
+        } else {
+            let newID = try await reminderManager.createReminder(
+                title: title,
+                notes: notes.isEmpty ? nil : notes,
+                dueDate: dueDate,
+                priority: priority
+            )
+            reminder.eventKitID = newID
+        }
+
+        reminder.title = title
+        reminder.notes = notes
+        reminder.dueDate = dueDate
+        reminder.reminderType = type
+        try? modelContext.save()
     }
 
     private func reminderTypeIcon(_ type: ReminderType) -> String {

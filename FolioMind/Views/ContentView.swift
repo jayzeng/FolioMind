@@ -8,6 +8,8 @@
 import SwiftUI
 import SwiftData
 import PhotosUI
+import Combine
+import AVFoundation
 
 /// Shared glassy card used across list and detail screens for a softer look.
 struct SurfaceCard<Content: View>: View {
@@ -56,12 +58,41 @@ struct PillBadge: View {
     }
 }
 
-private struct PersonSummary: Identifiable, Hashable {
+private enum SpotlightKind: String {
+    case person
+    case location
+
+    var accentColor: Color {
+        switch self {
+        case .person: return .blue
+        case .location: return .pink
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .person: return "person.crop.circle.fill"
+        case .location: return "mappin.circle.fill"
+        }
+    }
+}
+
+private struct SpotlightSummary: Identifiable, Hashable {
     let id: String
+    let kind: SpotlightKind
     let displayName: String
+    let normalizedValue: String
     var documentIDs: Set<UUID>
 
     var documentCount: Int { documentIDs.count }
+
+    init(kind: SpotlightKind, displayName: String, normalizedValue: String, documentIDs: Set<UUID>) {
+        self.kind = kind
+        self.displayName = displayName
+        self.normalizedValue = normalizedValue
+        self.documentIDs = documentIDs
+        self.id = "\(kind.rawValue):\(normalizedValue)"
+    }
 
     var initials: String {
         let parts = displayName.split(separator: " ").map(String.init)
@@ -72,18 +103,6 @@ private struct PersonSummary: Identifiable, Hashable {
 }
 
 extension DocumentType {
-    var displayName: String {
-        switch self {
-        case .creditCard: "Credit Card"
-        case .insuranceCard: "Insurance"
-        case .idCard: "ID Card"
-        case .letter: "Letter"
-        case .billStatement: "Statement"
-        case .receipt: "Receipt"
-        case .generic: "Document"
-        }
-    }
-
     var symbolName: String {
         switch self {
         case .creditCard: "creditcard.fill"
@@ -134,11 +153,13 @@ struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var services: AppServices
     @Query(sort: \Document.createdAt, order: .reverse) private var documents: [Document]
+    @Query(sort: \AudioNote.createdAt, order: .reverse) private var audioNotes: [AudioNote]
     @State private var searchText: String = ""
     @State private var searchResults: [SearchResult] = []
     @State private var isSearching: Bool = false
     @State private var isImporting: Bool = false
     @State private var isScanning: Bool = false
+    @State private var isRecordingAudio: Bool = false
     @State private var showScanner: Bool = false
     @State private var photoPickerItem: PhotosPickerItem?
     @State private var errorMessage: String?
@@ -147,7 +168,8 @@ struct ContentView: View {
     @State private var showDeleteConfirmation: Bool = false
     @State private var showSettings: Bool = false
     @State private var statusNotice: StatusNotice?
-    @State private var selectedPersonID: String?
+    @State private var selectedSpotlightID: String?
+    @State private var noteToShow: AudioNote?
 
     private var scannerAvailable: Bool {
         DocumentScannerView.isAvailable
@@ -157,24 +179,42 @@ struct ContentView: View {
         !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    private var peopleSummaries: [PersonSummary] {
-        var summaries: [String: PersonSummary] = [:]
+    private var spotlightSummaries: [SpotlightSummary] {
+        var summaries: [String: SpotlightSummary] = [:]
 
         for document in documents {
             let names = personNames(for: document)
-            guard !names.isEmpty else { continue }
-
             for name in names {
-                let normalized = normalizedName(name)
+                let normalized = normalizedLabel(name)
                 guard !normalized.isEmpty else { continue }
+                let id = "person:\(normalized)"
 
-                if var existing = summaries[normalized] {
+                if var existing = summaries[id] {
                     existing.documentIDs.insert(document.id)
-                    summaries[normalized] = existing
+                    summaries[id] = existing
                 } else {
-                    summaries[normalized] = PersonSummary(
-                        id: normalized,
+                    summaries[id] = SpotlightSummary(
+                        kind: .person,
                         displayName: name,
+                        normalizedValue: normalized,
+                        documentIDs: [document.id]
+                    )
+                }
+            }
+
+            if let location = cleanedLocation(document.location) {
+                let normalized = normalizedLabel(location)
+                guard !normalized.isEmpty else { continue }
+                let id = "location:\(normalized)"
+
+                if var existing = summaries[id] {
+                    existing.documentIDs.insert(document.id)
+                    summaries[id] = existing
+                } else {
+                    summaries[id] = SpotlightSummary(
+                        kind: .location,
+                        displayName: location,
+                        normalizedValue: normalized,
                         documentIDs: [document.id]
                     )
                 }
@@ -183,23 +223,26 @@ struct ContentView: View {
 
         return summaries.values.sorted {
             if $0.documentCount == $1.documentCount {
-                return $0.displayName < $1.displayName
+                if $0.kind == $1.kind {
+                    return $0.displayName < $1.displayName
+                }
+                return $0.kind.rawValue < $1.kind.rawValue
             }
             return $0.documentCount > $1.documentCount
         }
     }
 
-    private var selectedPersonName: String? {
-        guard let selectedPersonID else { return nil }
-        return peopleSummaries.first(where: { $0.id == selectedPersonID })?.displayName
+    private var selectedSpotlightName: String? {
+        guard let selectedSpotlightID else { return nil }
+        return spotlightSummaries.first(where: { $0.id == selectedSpotlightID })?.displayName
     }
 
     private var gridData: (documents: [Document], scores: [SearchScoreComponents]?) {
         if showingSearchResults {
-            let filtered = searchResults.filter { documentMatchesSelectedPerson($0.document) }
+            let filtered = searchResults.filter { documentMatchesSelectedSpotlight($0.document) }
             return (filtered.map(\.document), filtered.map(\.score))
         } else {
-            let filtered = documents.filter { documentMatchesSelectedPerson($0) }
+            let filtered = documents.filter { documentMatchesSelectedSpotlight($0) }
             return (filtered, nil)
         }
     }
@@ -213,12 +256,15 @@ struct ContentView: View {
                         InlineStatusBanner(notice: notice)
                             .padding(.bottom, 12)
                             .transition(.move(edge: .top).combined(with: .opacity))
-                    } else if isSearching {
+                    } else if isSearching || isImporting || isScanning || isRecordingAudio {
                         statusBanner
                     }
 
-                    if !peopleSummaries.isEmpty {
-                        peopleSection(peopleSummaries)
+                    audioSection
+                        .padding(.bottom, 12)
+
+                    if !spotlightSummaries.isEmpty {
+                        spotlightSection(spotlightSummaries)
                             .padding(.bottom, 12)
                     }
 
@@ -280,10 +326,27 @@ struct ContentView: View {
             .onChange(of: photoPickerItem) { _, newItem in
                 Task { await importSelectedPhoto(newItem) }
             }
-            .onChange(of: peopleSummaries) { _, updated in
-                if let selectedPersonID, !updated.contains(where: { $0.id == selectedPersonID }) {
-                    self.selectedPersonID = nil
+            .onChange(of: spotlightSummaries) { _, updated in
+                if let selectedSpotlightID, !updated.contains(where: { $0.id == selectedSpotlightID }) {
+                    self.selectedSpotlightID = nil
                 }
+            }
+            .onReceive(services.audioRecorder.$isRecording) { isRecording in
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    self.isRecordingAudio = isRecording
+                }
+            }
+            .sheet(item: $noteToShow) { note in
+                AudioNoteDetailView(
+                    note: note,
+                    onDelete: {
+                        deleteAudioNote(note)
+                        noteToShow = nil
+                    },
+                    onError: { message in
+                        errorMessage = message
+                    }
+                )
             }
             .sheet(isPresented: $showScanner) {
                 DocumentScannerView {
@@ -323,6 +386,80 @@ struct ContentView: View {
         }
     }
 
+    private var audioSection: some View {
+        SurfaceCard {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Audio Notes")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Text(audioNotes.isEmpty ? "No recordings yet" : "\(audioNotes.count) saved")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                    Spacer()
+                    Button {
+                        toggleAudioRecording()
+                    } label: {
+                        Label(
+                            isRecordingAudio ? "Stop" : "Record",
+                            systemImage: isRecordingAudio ? "stop.circle.fill" : "mic.fill"
+                        )
+                        .font(.subheadline.weight(.semibold))
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(isRecordingAudio ? .red : .blue)
+                    .controlSize(.regular)
+                }
+
+                if isRecordingAudio {
+                    HStack(spacing: 8) {
+                        Image(systemName: "waveform.path")
+                            .font(.subheadline)
+                            .foregroundStyle(.red)
+                        Text("Recording… tap Stop when finished")
+                            .font(.subheadline)
+                            .foregroundStyle(.primary)
+                    }
+                }
+
+                if audioNotes.isEmpty {
+                    HStack(spacing: 10) {
+                        Image(systemName: "waveform.circle")
+                            .font(.system(size: 28))
+                            .foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Capture quick voice notes")
+                                .font(.subheadline.weight(.semibold))
+                            Text("Use the mic to add context or reminders alongside your documents.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.top, 2)
+                } else {
+                    VStack(spacing: 10) {
+                        ForEach(audioNotes) { note in
+                            AudioNoteRow(
+                                note: note,
+                                onError: { message in
+                                    errorMessage = message
+                                },
+                                onDelete: {
+                                    deleteAudioNote(note)
+                                },
+                                onTap: {
+                                    noteToShow = note
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private var statusBanner: some View {
         VStack(spacing: 8) {
             if isSearching {
@@ -341,6 +478,11 @@ struct ContentView: View {
             }
             if isScanning {
                 Label("Scanning document…", systemImage: "doc.viewfinder")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            if isRecordingAudio {
+                Label("Recording audio…", systemImage: "waveform")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -366,8 +508,8 @@ struct ContentView: View {
     }
 
     private var searchEmptyTitle: String {
-        if let selectedPersonName {
-            return "No results for \"\(searchText)\" with \(selectedPersonName)"
+        if let selectedSpotlightName {
+            return "No results for \"\(searchText)\" with \(selectedSpotlightName)"
         }
         return "No results for \"\(searchText)\""
     }
@@ -377,11 +519,11 @@ struct ContentView: View {
             Image(systemName: "person.crop.circle.badge.questionmark")
                 .font(.system(size: 48))
                 .foregroundStyle(.secondary)
-            Text("No documents for this person yet")
+            Text("No documents for this filter yet")
                 .font(.headline)
                 .foregroundStyle(.secondary)
-            if let selectedPersonName {
-                Text("Try clearing the filter or linking \(selectedPersonName) to a document")
+            if let selectedSpotlightName {
+                Text("Try clearing the filter or adding a document for \(selectedSpotlightName)")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
                     .multilineTextAlignment(.center)
@@ -410,22 +552,22 @@ struct ContentView: View {
     }
 
     @ViewBuilder
-    private func peopleSection(_ people: [PersonSummary]) -> some View {
+    private func spotlightSection(_ items: [SpotlightSummary]) -> some View {
         SurfaceCard {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("People")
+                        Text("People & Places")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
-                        Text("\(people.count) detected")
+                        Text("\(items.count) detected")
                             .font(.caption)
                             .foregroundStyle(.tertiary)
                     }
                     Spacer()
-                    if selectedPersonID != nil {
+                    if selectedSpotlightID != nil {
                         Button {
-                            selectedPersonID = nil
+                            selectedSpotlightID = nil
                         } label: {
                             Label("Clear", systemImage: "line.3.horizontal.decrease.circle")
                                 .font(.caption.weight(.semibold))
@@ -437,15 +579,15 @@ struct ContentView: View {
 
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 10) {
-                        ForEach(people) { person in
-                            PersonChip(
-                                person: person,
-                                isSelected: selectedPersonID == person.id,
+                        ForEach(items) { item in
+                            SpotlightChip(
+                                item: item,
+                                isSelected: selectedSpotlightID == item.id,
                                 onTap: {
-                                    if selectedPersonID == person.id {
-                                        selectedPersonID = nil
+                                    if selectedSpotlightID == item.id {
+                                        selectedSpotlightID = nil
                                     } else {
-                                        selectedPersonID = person.id
+                                        selectedSpotlightID = item.id
                                     }
                                 }
                             )
@@ -558,8 +700,6 @@ struct ContentView: View {
                 from: urls,
                 hints: DocumentHints(suggestedType: .generic, personName: nil),
                 title: baseTitle,
-                location: nil,
-                capturedAt: Date(),
                 in: modelContext
             )
             showNotice(StatusNotice(
@@ -603,6 +743,83 @@ struct ContentView: View {
     }
 
     @MainActor
+    private func toggleAudioRecording() {
+        Task { @MainActor in
+            if isRecordingAudio {
+                await finishAudioRecording()
+            } else {
+                await startAudioRecording()
+            }
+        }
+    }
+
+    @MainActor
+    private func startAudioRecording() async {
+        do {
+            _ = try await services.audioRecorder.startRecording()
+            withAnimation(.easeIn(duration: 0.2)) {
+                isRecordingAudio = true
+            }
+        } catch {
+            isRecordingAudio = false
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    @MainActor
+    private func finishAudioRecording() async {
+        do {
+            let result = try services.audioRecorder.stopRecording()
+            let note = AudioNote(
+                title: recordingTitle(from: result.startedAt),
+                fileURL: result.url.path,
+                createdAt: result.startedAt,
+                duration: result.duration
+            )
+            modelContext.insert(note)
+            try modelContext.save()
+            withAnimation(.easeOut(duration: 0.2)) {
+                isRecordingAudio = false
+            }
+            showNotice(StatusNotice(
+                title: "Audio saved",
+                subtitle: "Recording stored to your library",
+                systemImage: "waveform.circle.fill",
+                tint: .green,
+                isProgress: false
+            ), autoHide: 2.5)
+        } catch {
+            isRecordingAudio = false
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func recordingTitle(from date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return "Recording \(formatter.string(from: date))"
+    }
+
+    private func deleteAudioNote(_ note: AudioNote) {
+        do {
+            let url = URL(fileURLWithPath: note.fileURL)
+            modelContext.delete(note)
+            try? FileManager.default.removeItem(at: url)
+            try modelContext.save()
+            showNotice(StatusNotice(
+                title: "Recording deleted",
+                subtitle: nil,
+                systemImage: "trash.fill",
+                tint: .red,
+                isProgress: false
+            ), autoHide: 2)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    @MainActor
     private func performSearch(text: String) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
@@ -642,24 +859,41 @@ struct ContentView: View {
 
         var seen = Set<String>()
         return names.compactMap { name in
-            let normalized = normalizedName(name)
+            let normalized = normalizedLabel(name)
             guard !normalized.isEmpty, !seen.contains(normalized) else { return nil }
             seen.insert(normalized)
             return name
         }
     }
 
-    private func documentMatchesSelectedPerson(_ document: Document) -> Bool {
-        guard let selectedPersonID else { return true }
-        return personNames(for: document).contains { normalizedName($0) == selectedPersonID }
+    private func documentMatchesSelectedSpotlight(_ document: Document) -> Bool {
+        guard
+            let selectedSpotlightID,
+            let filter = spotlightSummaries.first(where: { $0.id == selectedSpotlightID })
+        else { return true }
+
+        switch filter.kind {
+        case .person:
+            return personNames(for: document).contains { normalizedLabel($0) == filter.normalizedValue }
+        case .location:
+            guard let location = cleanedLocation(document.location) else { return false }
+            return normalizedLabel(location) == filter.normalizedValue
+        }
     }
 
-    private func normalizedName(_ name: String) -> String {
-        name
+    private func normalizedLabel(_ value: String) -> String {
+        value
             .components(separatedBy: .whitespacesAndNewlines)
             .filter { !$0.isEmpty }
             .joined(separator: " ")
             .lowercased()
+    }
+
+    private func cleanedLocation(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+            return nil
+        }
+        return trimmed
     }
 
     private func showNotice(_ notice: StatusNotice, autoHide: Double? = nil) {
@@ -674,6 +908,439 @@ struct ContentView: View {
                         self.statusNotice = nil
                     }
                 }
+            }
+        }
+    }
+}
+
+// MARK: - Audio Notes
+
+private struct AudioNoteRow: View {
+    let note: AudioNote
+    let onError: (String) -> Void
+    let onDelete: () -> Void
+    let onTap: () -> Void
+
+    @State private var isPlaying = false
+    @State private var player: AVAudioPlayer?
+    @State private var playbackProgress: Double = 0
+    @State private var playbackTimer: Timer?
+    private let playbackDelegate = PlaybackDelegate()
+
+    private var durationText: String {
+        let formatter = DateComponentsFormatter()
+        formatter.allowedUnits = note.duration >= 3600 ? [.hour, .minute, .second] : [.minute, .second]
+        formatter.zeroFormattingBehavior = [.pad]
+        formatter.unitsStyle = .short
+        return formatter.string(from: note.duration) ?? "0:00"
+    }
+
+    private var timestampText: String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter.localizedString(for: note.createdAt, relativeTo: Date())
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Button {
+                togglePlayback()
+            } label: {
+                ZStack {
+                    Circle()
+                        .trim(from: 0, to: CGFloat(playbackProgress))
+                        .stroke(isPlaying ? Color.green : Color.blue, lineWidth: 3)
+                        .frame(width: 46, height: 46)
+                        .rotationEffect(.degrees(-90))
+                    Circle()
+                        .fill(isPlaying ? Color.green.opacity(0.16) : Color.blue.opacity(0.14))
+                        .frame(width: 42, height: 42)
+                    Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(isPlaying ? Color.green : Color.blue)
+                }
+            }
+            .buttonStyle(.plain)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(note.title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+
+                HStack(spacing: 6) {
+                    Image(systemName: "clock")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(timestampText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture(perform: onTap)
+
+            Spacer()
+
+            VStack(alignment: .trailing, spacing: 4) {
+                Text(durationText)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                Button(role: .destructive) {
+                    onDelete()
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.caption)
+                }
+                .buttonStyle(.borderless)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color(.tertiarySystemGroupedBackground))
+        )
+        .onTapGesture(perform: onTap)
+        .onDisappear {
+            stopPlayback()
+        }
+    }
+
+    private func togglePlayback() {
+        if isPlaying {
+            stopPlayback()
+        } else {
+            startPlayback()
+        }
+    }
+
+    private func startPlayback() {
+        guard FileManager.default.fileExists(atPath: note.fileURL) else {
+            isPlaying = false
+            onError("Recording file is missing.")
+            return
+        }
+
+        do {
+            let url = URL(fileURLWithPath: note.fileURL)
+            playbackDelegate.onFinish = {
+                DispatchQueue.main.async {
+                    isPlaying = false
+                    playbackProgress = 1
+                    playbackTimer?.invalidate()
+                    playbackTimer = nil
+                }
+            }
+            let player = try AVAudioPlayer(contentsOf: url)
+            player.delegate = playbackDelegate
+            player.prepareToPlay()
+            player.play()
+            self.player = player
+            isPlaying = true
+            startProgressTimer()
+        } catch {
+            isPlaying = false
+            onError(error.localizedDescription)
+        }
+    }
+
+    private func stopPlayback() {
+        player?.stop()
+        player = nil
+        isPlaying = false
+        playbackTimer?.invalidate()
+        playbackTimer = nil
+    }
+
+    private func startProgressTimer() {
+        playbackTimer?.invalidate()
+        guard let player else { return }
+        playbackTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { _ in
+            let progress = player.duration > 0 ? player.currentTime / player.duration : 0
+            DispatchQueue.main.async {
+                playbackProgress = progress
+            }
+        }
+    }
+
+    private final class PlaybackDelegate: NSObject, AVAudioPlayerDelegate {
+        var onFinish: (() -> Void)?
+
+        func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+            onFinish?()
+        }
+    }
+}
+
+// MARK: - Audio Note Detail
+
+private struct AudioNoteDetailView: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
+    @EnvironmentObject private var services: AppServices
+
+    let note: AudioNote
+    let onDelete: () -> Void
+    let onError: (String) -> Void
+
+    @State private var transcript: String = ""
+    @State private var summary: String = ""
+    @State private var isLoading: Bool = false
+    @State private var errorMessage: String?
+    @State private var isPlaying = false
+    @State private var player: AVAudioPlayer?
+    @State private var playbackProgress: Double = 0
+    @State private var playbackTimer: Timer?
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    header
+
+                    if let errorMessage {
+                        InlineStatusBanner(notice: StatusNotice(
+                            title: "Transcription failed",
+                            subtitle: errorMessage,
+                            systemImage: "exclamationmark.triangle.fill",
+                            tint: .orange,
+                            isProgress: false
+                        ))
+                    }
+
+                    summaryCard
+                    transcriptCard
+                }
+                .padding(16)
+            }
+            .background(Color(.systemGroupedBackground).ignoresSafeArea())
+            .navigationTitle("Audio Note")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Menu {
+                        Button {
+                            Task { await loadContent(force: true) }
+                        } label: {
+                            Label("Refresh summary", systemImage: "arrow.clockwise")
+                        }
+
+                        Button(role: .destructive) {
+                            stopPlayback()
+                            onDelete()
+                            dismiss()
+                        } label: {
+                            Label("Delete recording", systemImage: "trash")
+                        }
+                    } label: {
+                        if isLoading {
+                            ProgressView()
+                        } else {
+                            Image(systemName: "ellipsis.circle")
+                        }
+                    }
+                }
+            }
+            .task { await loadContent(force: false) }
+            .onDisappear {
+                stopPlayback()
+            }
+        }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(note.title)
+                .font(.headline)
+            HStack(spacing: 12) {
+                Label(note.createdAt.formatted(date: .abbreviated, time: .shortened), systemImage: "calendar")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Label(durationText, systemImage: "timer")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Button {
+                togglePlayback()
+            } label: {
+                HStack(spacing: 10) {
+                    ZStack {
+                        Circle()
+                            .trim(from: 0, to: CGFloat(playbackProgress))
+                            .stroke(isPlaying ? Color.green : Color.blue, lineWidth: 4)
+                            .frame(width: 30, height: 30)
+                            .rotationEffect(.degrees(-90))
+                        Circle()
+                            .fill(isPlaying ? Color.green.opacity(0.2) : Color.blue.opacity(0.2))
+                            .frame(width: 28, height: 28)
+                        Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(isPlaying ? .green : .blue)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(isPlaying ? "Pause" : "Play recording")
+                            .font(.subheadline.weight(.semibold))
+                        Text(durationText)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.vertical, 8)
+                .padding(.horizontal, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Color(.secondarySystemBackground))
+                )
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private var summaryCard: some View {
+        SurfaceCard {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Label("Summary", systemImage: "text.quote")
+                        .font(.subheadline.weight(.semibold))
+                    Spacer()
+                    if isLoading {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                    }
+                }
+                if summary.isEmpty {
+                    Text("We’ll summarize this note once transcription finishes.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text(summary)
+                        .font(.body)
+                        .foregroundStyle(.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    private var transcriptCard: some View {
+        SurfaceCard {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Transcript", systemImage: "waveform")
+                    .font(.subheadline.weight(.semibold))
+
+                if transcript.isEmpty {
+                    Text("Transcription will appear here.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text(transcript)
+                        .font(.body)
+                        .foregroundStyle(.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    private var durationText: String {
+        let formatter = DateComponentsFormatter()
+        formatter.allowedUnits = note.duration >= 3600 ? [.hour, .minute, .second] : [.minute, .second]
+        formatter.zeroFormattingBehavior = [.pad]
+        formatter.unitsStyle = .short
+        return formatter.string(from: note.duration) ?? "0:00"
+    }
+
+    @MainActor
+    private func loadContent(force: Bool) async {
+        guard !isLoading else { return }
+        isLoading = true
+        defer { isLoading = false }
+
+        do {
+            let transcriptText: String
+            if force {
+                // Clear cached values before reprocessing
+                note.transcript = nil
+                note.summary = nil
+                try? modelContext.save()
+                transcriptText = try await services.audioNoteManager.transcribeIfNeeded(note: note)
+            } else {
+                transcriptText = try await services.audioNoteManager.transcribeIfNeeded(note: note)
+            }
+            transcript = transcriptText
+
+            let summaryText = try await services.audioNoteManager.summarizeIfNeeded(note: note, transcript: transcriptText)
+            summary = summaryText
+            try? modelContext.save()
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+            onError(error.localizedDescription)
+        }
+    }
+
+    private func togglePlayback() {
+        if isPlaying {
+            stopPlayback()
+        } else {
+            startPlayback()
+        }
+    }
+
+    private func startPlayback() {
+        guard FileManager.default.fileExists(atPath: note.fileURL) else {
+            onError("Recording file is missing.")
+            return
+        }
+        do {
+            let audioURL = URL(fileURLWithPath: note.fileURL)
+            let player = try AVAudioPlayer(contentsOf: audioURL)
+            player.delegate = DetailPlaybackDelegate { [self] in
+                isPlaying = false
+                self.player = nil
+            }
+            player.prepareToPlay()
+            player.play()
+            self.player = player
+            isPlaying = true
+        } catch {
+            onError(error.localizedDescription)
+        }
+    }
+
+    private func stopPlayback() {
+        player?.stop()
+        player = nil
+        isPlaying = false
+        playbackTimer?.invalidate()
+        playbackTimer = nil
+    }
+
+    private final class DetailPlaybackDelegate: NSObject, AVAudioPlayerDelegate {
+        let onFinish: () -> Void
+
+        init(onFinish: @escaping () -> Void) {
+            self.onFinish = onFinish
+        }
+
+        func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+            onFinish()
+        }
+    }
+
+    private func startProgressTimer() {
+        playbackTimer?.invalidate()
+        guard let player else { return }
+        playbackTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { _ in
+            let progress = player.duration > 0 ? player.currentTime / player.duration : 0
+            DispatchQueue.main.async {
+                playbackProgress = progress
             }
         }
     }
@@ -734,28 +1401,36 @@ struct InlineStatusBanner: View {
     }
 }
 
-private struct PersonChip: View {
-    let person: PersonSummary
+private struct SpotlightChip: View {
+    let item: SpotlightSummary
     let isSelected: Bool
     let onTap: () -> Void
+
+    private var tint: Color { item.kind.accentColor }
 
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: 10) {
                 ZStack {
                     Circle()
-                        .fill(isSelected ? Color.blue.opacity(0.18) : Color(.tertiarySystemGroupedBackground))
+                        .fill(isSelected ? tint.opacity(0.18) : Color(.tertiarySystemGroupedBackground))
                         .frame(width: 38, height: 38)
-                    Text(person.initials.uppercased())
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(isSelected ? .blue : .secondary)
+                    if item.kind == .person {
+                        Text(item.initials.uppercased())
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(isSelected ? tint : .secondary)
+                    } else {
+                        Image(systemName: item.kind.symbolName)
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(isSelected ? tint : .secondary)
+                    }
                 }
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(person.displayName)
+                    Text(item.displayName)
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.primary)
-                    Text("\(person.documentCount) document\(person.documentCount == 1 ? "" : "s")")
+                    Text("\(item.documentCount) document\(item.documentCount == 1 ? "" : "s")")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -764,11 +1439,11 @@ private struct PersonChip: View {
             .padding(.vertical, 10)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(isSelected ? Color.blue.opacity(0.12) : Color(.secondarySystemGroupedBackground))
+                    .fill(isSelected ? tint.opacity(0.12) : Color(.secondarySystemGroupedBackground))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(isSelected ? Color.blue : Color.clear, lineWidth: 1.5)
+                    .stroke(isSelected ? tint : Color.clear, lineWidth: 1.5)
             )
         }
         .buttonStyle(.plain)
@@ -1248,16 +1923,6 @@ private struct OCRCard: View {
                         .textSelection(.enabled)
                 }
             }
-        }
-    }
-}
-
-private extension DocumentRelationship {
-    var displayName: String {
-        switch self {
-        case .owner: "Owner"
-        case .dependent: "Dependent"
-        case .mentioned: "Mentioned"
         }
     }
 }

@@ -14,6 +14,7 @@ struct SettingsView: View {
     @AppStorage("use_openai_fallback") private var useOpenAIFallback: Bool = true
     @State private var showingAPIKeyInfo: Bool = false
     @State private var showingSaveConfirmation: Bool = false
+    @StateObject private var languageManager = LanguageManager.shared
 
     private var hasAppleIntelligence: Bool {
         LLMServiceFactory.create(type: .apple) != nil
@@ -50,6 +51,35 @@ struct SettingsView: View {
                     Text("Intelligence")
                 } footer: {
                     Text("Apple Intelligence provides on-device text cleaning and intelligent field extraction for better accuracy and privacy.")
+                }
+
+                // Language Section
+                Section {
+                    Picker("App Language", selection: $languageManager.currentLanguage) {
+                        ForEach(AppLanguage.allCases) { language in
+                            HStack {
+                                Text(language.icon)
+                                Text(language.displayName)
+                            }
+                            .tag(language)
+                        }
+                    }
+                    .pickerStyle(.menu)
+
+                    if languageManager.needsRestart {
+                        HStack(spacing: 8) {
+                            Image(systemName: "arrow.clockwise")
+                                .foregroundStyle(.orange)
+                            Text("Restart app to apply language change")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 4)
+                    }
+                } header: {
+                    Text("Language")
+                } footer: {
+                    Text("Change the app language. Restart the app for the change to take effect.")
                 }
 
                 // OpenAI Section

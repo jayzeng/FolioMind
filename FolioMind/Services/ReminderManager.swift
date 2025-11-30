@@ -95,6 +95,39 @@ final class ReminderManager {
         }
     }
 
+    func updateReminder(
+        eventKitID: String,
+        title: String,
+        notes: String?,
+        dueDate: Date,
+        priority: Int = 0
+    ) async throws {
+        guard checkPermission() else {
+            throw ReminderError.permissionDenied
+        }
+
+        guard let reminder = eventStore.calendarItem(withIdentifier: eventKitID) as? EKReminder else {
+            throw ReminderError.notFound
+        }
+
+        reminder.title = title
+        reminder.notes = notes
+        reminder.calendar = eventStore.defaultCalendarForNewReminders()
+
+        let dateComponents = Calendar.current.dateComponents(
+            [.year, .month, .day, .hour, .minute],
+            from: dueDate
+        )
+        reminder.dueDateComponents = dateComponents
+        reminder.priority = priority
+
+        do {
+            try eventStore.save(reminder, commit: true)
+        } catch {
+            throw ReminderError.creationFailed(error.localizedDescription)
+        }
+    }
+
     func createCalendarEvent(
         title: String,
         notes: String?,

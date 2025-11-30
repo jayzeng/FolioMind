@@ -1,0 +1,7 @@
+/* Permission Descriptions - Simplified Chinese */
+
+"NSCalendarsUsageDescription" = "允许 FolioMind 在您的日历中添加后续事项。";
+"NSCameraUsageDescription" = "允许 FolioMind 扫描文档并拍摄照片进行分析。";
+"NSMicrophoneUsageDescription" = "允许 FolioMind 录制语音备忘录。";
+"NSPhotoLibraryUsageDescription" = "允许 FolioMind 导入照片或扫描件进行文档分析。";
+"NSRemindersUsageDescription" = "允许 FolioMind 为截止日期和后续事项创建提醒。";
