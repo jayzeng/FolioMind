@@ -136,6 +136,7 @@ final class DocumentStore {
     private let analyzer: DocumentAnalyzer
     private let embeddingService: EmbeddingService
     private let llmService: LLMService?
+    private let assetDirectoryName = "FolioMindAssets"
 
     init(analyzer: DocumentAnalyzer, embeddingService: EmbeddingService, llmService: LLMService? = nil) {
         self.analyzer = analyzer
@@ -185,8 +186,11 @@ final class DocumentStore {
             throw NSError(domain: "FolioMind", code: -1, userInfo: [NSLocalizedDescriptionKey: "No images to ingest."])
         }
 
+        // Persist assets into Documents/FolioMindAssets so they survive rebuilds/restarts
+        let persistentURLs = try imageURLs.map { try persistAsset(from: $0) }
+
         var analyses: [DocumentAnalysisResult] = []
-        for url in imageURLs {
+        for url in persistentURLs {
             let analysis = try await analyzer.analyze(imageURL: url, hints: hints)
             analyses.append(analysis)
         }
@@ -219,7 +223,7 @@ final class DocumentStore {
         combinedFaces.forEach { context.insert($0) }
 
         // Create Asset objects for each image
-        let assets = imageURLs.enumerated().map { index, url in
+        let assets = persistentURLs.enumerated().map { index, url in
             Asset(
                 fileURL: url.path,
                 assetType: .image,
@@ -248,6 +252,37 @@ final class DocumentStore {
         document.embedding = embedding
         try context.save()
         return document
+    }
+
+    // MARK: - Asset Persistence
+
+    /// Copy an asset into a persistent app Documents subdirectory and return its new URL.
+    private func persistAsset(from url: URL) throws -> URL {
+        let fm = FileManager.default
+        let destDir = try ensureAssetDirectory()
+        let destination = destDir.appendingPathComponent("\(UUID().uuidString)\(url.pathExtension.isEmpty ? "" : ".")\(url.pathExtension)")
+
+        // If the source is already in our destination directory, skip the copy
+        if url.deletingLastPathComponent() == destDir {
+            return url
+        }
+
+        // Avoid duplicating files if an identical name exists
+        if !fm.fileExists(atPath: destination.path) {
+            try fm.copyItem(at: url, to: destination)
+        }
+
+        return destination
+    }
+
+    private func ensureAssetDirectory() throws -> URL {
+        let fm = FileManager.default
+        let documents = try fm.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        let dir = documents.appendingPathComponent(assetDirectoryName, isDirectory: true)
+        if !fm.fileExists(atPath: dir.path) {
+            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        }
+        return dir
     }
 
     /// Re-run extraction for an existing document using its current image assets.

@@ -56,6 +56,21 @@ struct PillBadge: View {
     }
 }
 
+private struct PersonSummary: Identifiable, Hashable {
+    let id: String
+    let displayName: String
+    var documentIDs: Set<UUID>
+
+    var documentCount: Int { documentIDs.count }
+
+    var initials: String {
+        let parts = displayName.split(separator: " ").map(String.init)
+        let first = parts.first?.prefix(1) ?? "?"
+        let last = parts.dropFirst().first?.prefix(1)
+        return String(first + (last ?? ""))
+    }
+}
+
 extension DocumentType {
     var displayName: String {
         switch self {
@@ -131,6 +146,8 @@ struct ContentView: View {
     @State private var documentToDelete: Document?
     @State private var showDeleteConfirmation: Bool = false
     @State private var showSettings: Bool = false
+    @State private var statusNotice: StatusNotice?
+    @State private var selectedPersonID: String?
 
     private var scannerAvailable: Bool {
         DocumentScannerView.isAvailable
@@ -140,25 +157,86 @@ struct ContentView: View {
         !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    private var peopleSummaries: [PersonSummary] {
+        var summaries: [String: PersonSummary] = [:]
+
+        for document in documents {
+            let names = personNames(for: document)
+            guard !names.isEmpty else { continue }
+
+            for name in names {
+                let normalized = normalizedName(name)
+                guard !normalized.isEmpty else { continue }
+
+                if var existing = summaries[normalized] {
+                    existing.documentIDs.insert(document.id)
+                    summaries[normalized] = existing
+                } else {
+                    summaries[normalized] = PersonSummary(
+                        id: normalized,
+                        displayName: name,
+                        documentIDs: [document.id]
+                    )
+                }
+            }
+        }
+
+        return summaries.values.sorted {
+            if $0.documentCount == $1.documentCount {
+                return $0.displayName < $1.displayName
+            }
+            return $0.documentCount > $1.documentCount
+        }
+    }
+
+    private var selectedPersonName: String? {
+        guard let selectedPersonID else { return nil }
+        return peopleSummaries.first(where: { $0.id == selectedPersonID })?.displayName
+    }
+
+    private var gridData: (documents: [Document], scores: [SearchScoreComponents]?) {
+        if showingSearchResults {
+            let filtered = searchResults.filter { documentMatchesSelectedPerson($0.document) }
+            return (filtered.map(\.document), filtered.map(\.score))
+        } else {
+            let filtered = documents.filter { documentMatchesSelectedPerson($0) }
+            return (filtered, nil)
+        }
+    }
+
     var body: some View {
+        let currentGridData = gridData
         NavigationStack {
             ScrollView {
                 VStack(spacing: 0) {
-                    if isSearching || isImporting || isScanning {
+                    if let notice = statusNotice {
+                        InlineStatusBanner(notice: notice)
+                            .padding(.bottom, 12)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                    } else if isSearching {
                         statusBanner
                     }
 
+                    if !peopleSummaries.isEmpty {
+                        peopleSection(peopleSummaries)
+                            .padding(.bottom, 12)
+                    }
+
                     if showingSearchResults {
-                        if searchResults.isEmpty && !isSearching {
+                        if currentGridData.documents.isEmpty && !isSearching {
                             emptySearchView
                         } else {
-                            documentGrid(searchResults.map { $0.document }, scores: searchResults.map { $0.score })
+                            documentGrid(currentGridData.documents, scores: currentGridData.scores)
                         }
                     } else {
                         if documents.isEmpty {
                             emptyStateView
                         } else {
-                            documentGrid(documents, scores: nil)
+                            if currentGridData.documents.isEmpty {
+                                filteredEmptyView
+                            } else {
+                                documentGrid(currentGridData.documents, scores: nil)
+                            }
                         }
                     }
                 }
@@ -202,6 +280,11 @@ struct ContentView: View {
             .onChange(of: photoPickerItem) { _, newItem in
                 Task { await importSelectedPhoto(newItem) }
             }
+            .onChange(of: peopleSummaries) { _, updated in
+                if let selectedPersonID, !updated.contains(where: { $0.id == selectedPersonID }) {
+                    self.selectedPersonID = nil
+                }
+            }
             .sheet(isPresented: $showScanner) {
                 DocumentScannerView {
                     urls in Task { try? await ingestURLs(urls) }
@@ -230,11 +313,11 @@ struct ContentView: View {
             }, message: { document in
                 Text("Are you sure you want to delete \"\(document.title)\"? This action cannot be undone.")
             })
-            .alert("Error", isPresented: .constant(errorMessage != nil), actions: {
-                Button("OK") { errorMessage = nil }
-            }, message: {
-                if let errorMessage {
-                    Text(errorMessage)
+        .alert("Error", isPresented: .constant(errorMessage != nil), actions: {
+            Button("OK") { errorMessage = nil }
+        }, message: {
+            if let errorMessage {
+                Text(errorMessage)
                 }
             })
         }
@@ -274,9 +357,35 @@ struct ContentView: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 48))
                 .foregroundStyle(.secondary)
-            Text("No results for \"\(searchText)\"")
+            Text(searchEmptyTitle)
                 .font(.headline)
                 .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 60)
+    }
+
+    private var searchEmptyTitle: String {
+        if let selectedPersonName {
+            return "No results for \"\(searchText)\" with \(selectedPersonName)"
+        }
+        return "No results for \"\(searchText)\""
+    }
+
+    private var filteredEmptyView: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "person.crop.circle.badge.questionmark")
+                .font(.system(size: 48))
+                .foregroundStyle(.secondary)
+            Text("No documents for this person yet")
+                .font(.headline)
+                .foregroundStyle(.secondary)
+            if let selectedPersonName {
+                Text("Try clearing the filter or linking \(selectedPersonName) to a document")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .multilineTextAlignment(.center)
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 60)
@@ -298,6 +407,54 @@ struct ContentView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 80)
+    }
+
+    @ViewBuilder
+    private func peopleSection(_ people: [PersonSummary]) -> some View {
+        SurfaceCard {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("People")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Text("\(people.count) detected")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                    Spacer()
+                    if selectedPersonID != nil {
+                        Button {
+                            selectedPersonID = nil
+                        } label: {
+                            Label("Clear", systemImage: "line.3.horizontal.decrease.circle")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.blue)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(people) { person in
+                            PersonChip(
+                                person: person,
+                                isSelected: selectedPersonID == person.id,
+                                onTap: {
+                                    if selectedPersonID == person.id {
+                                        selectedPersonID = nil
+                                    } else {
+                                        selectedPersonID = person.id
+                                    }
+                                }
+                            )
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+        }
     }
 
     @ViewBuilder
@@ -341,6 +498,13 @@ struct ContentView: View {
     private func importSelectedPhoto(_ item: PhotosPickerItem?) async {
         guard let item else { return }
         isImporting = true
+        showNotice(StatusNotice(
+            title: "Importing photo…",
+            subtitle: "Saving and analyzing",
+            systemImage: "arrow.down.circle",
+            tint: .blue,
+            isProgress: true
+        ))
         defer { isImporting = false }
 
         do {
@@ -354,8 +518,22 @@ struct ContentView: View {
             try data.write(to: tempURL)
             let title = item.itemIdentifier ?? tempURL.deletingPathExtension().lastPathComponent
             try await ingestURLs([tempURL], preferredTitle: title)
+            showNotice(StatusNotice(
+                title: "Photo imported",
+                subtitle: "Document created from \(title)",
+                systemImage: "checkmark.circle.fill",
+                tint: .green,
+                isProgress: false
+            ), autoHide: 2.5)
         } catch {
             errorMessage = error.localizedDescription
+            showNotice(StatusNotice(
+                title: "Import failed",
+                subtitle: error.localizedDescription,
+                systemImage: "exclamationmark.triangle.fill",
+                tint: .orange,
+                isProgress: false
+            ), autoHide: 3)
         }
     }
 
@@ -369,6 +547,13 @@ struct ContentView: View {
         }
         let baseTitle = preferredTitle ?? urls.first!.deletingPathExtension().lastPathComponent
         do {
+            showNotice(StatusNotice(
+                title: "Processing \(urls.count) image(s)…",
+                subtitle: "Running OCR, classification, embeddings",
+                systemImage: "sparkles.rectangle.stack",
+                tint: .blue,
+                isProgress: true
+            ))
             _ = try await services.documentStore.ingestDocuments(
                 from: urls,
                 hints: DocumentHints(suggestedType: .generic, personName: nil),
@@ -377,8 +562,22 @@ struct ContentView: View {
                 capturedAt: Date(),
                 in: modelContext
             )
+            showNotice(StatusNotice(
+                title: "Document ready",
+                subtitle: "\"\(baseTitle)\" processed",
+                systemImage: "checkmark.seal.fill",
+                tint: .green,
+                isProgress: false
+            ), autoHide: 2.5)
         } catch {
             errorMessage = error.localizedDescription
+            showNotice(StatusNotice(
+                title: "Processing failed",
+                subtitle: error.localizedDescription,
+                systemImage: "exclamationmark.triangle.fill",
+                tint: .orange,
+                isProgress: false
+            ), autoHide: 3)
         }
     }
 
@@ -420,6 +619,159 @@ struct ContentView: View {
             isSearching = false
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func personNames(for document: Document) -> [String] {
+        var names: [String] = []
+
+        let linkedNames = document.personLinks.compactMap { link in
+            let trimmed = link.person?.displayName.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        names.append(contentsOf: linkedNames)
+
+        let nameKeys = ["member_name", "member", "cardholder", "holder", "insured", "patient"]
+        let fieldNames = document.fields.compactMap { field -> String? in
+            let key = field.key.lowercased()
+            let isLikelyName = key.contains("name") || nameKeys.contains(where: { key.contains($0) })
+            guard isLikelyName else { return nil }
+            let trimmed = field.value.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        names.append(contentsOf: fieldNames)
+
+        var seen = Set<String>()
+        return names.compactMap { name in
+            let normalized = normalizedName(name)
+            guard !normalized.isEmpty, !seen.contains(normalized) else { return nil }
+            seen.insert(normalized)
+            return name
+        }
+    }
+
+    private func documentMatchesSelectedPerson(_ document: Document) -> Bool {
+        guard let selectedPersonID else { return true }
+        return personNames(for: document).contains { normalizedName($0) == selectedPersonID }
+    }
+
+    private func normalizedName(_ name: String) -> String {
+        name
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+            .lowercased()
+    }
+
+    private func showNotice(_ notice: StatusNotice, autoHide: Double? = nil) {
+        withAnimation(.spring(response: 0.3)) {
+            statusNotice = notice
+        }
+        if let delay = autoHide {
+            let noticeID = notice.id
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                if self.statusNotice?.id == noticeID {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        self.statusNotice = nil
+                    }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Status Notice
+
+struct StatusNotice: Identifiable, Equatable {
+    let id = UUID()
+    let title: String
+    let subtitle: String?
+    let systemImage: String
+    let tint: Color
+    let isProgress: Bool
+}
+
+struct InlineStatusBanner: View {
+    let notice: StatusNotice
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(notice.tint.opacity(0.15))
+                    .frame(width: 34, height: 34)
+                if notice.isProgress {
+                    ProgressView()
+                        .progressViewStyle(.circular)
+                        .tint(notice.tint)
+                } else {
+                    Image(systemName: notice.systemImage)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(notice.tint)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(notice.title)
+                    .font(.subheadline.weight(.semibold))
+                if let subtitle = notice.subtitle {
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+            }
+
+            Spacer()
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color(.secondarySystemBackground))
+                .shadow(color: .black.opacity(0.08), radius: 10, y: 4)
+        )
+        .padding(.horizontal, 2)
+    }
+}
+
+private struct PersonChip: View {
+    let person: PersonSummary
+    let isSelected: Bool
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 10) {
+                ZStack {
+                    Circle()
+                        .fill(isSelected ? Color.blue.opacity(0.18) : Color(.tertiarySystemGroupedBackground))
+                        .frame(width: 38, height: 38)
+                    Text(person.initials.uppercased())
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(isSelected ? .blue : .secondary)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(person.displayName)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Text("\(person.documentCount) document\(person.documentCount == 1 ? "" : "s")")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(isSelected ? Color.blue.opacity(0.12) : Color(.secondarySystemGroupedBackground))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(isSelected ? Color.blue : Color.clear, lineWidth: 1.5)
+            )
+        }
+        .buttonStyle(.plain)
     }
 }
 

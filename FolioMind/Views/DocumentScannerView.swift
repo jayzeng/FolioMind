@@ -55,7 +55,14 @@ struct DocumentScannerView: UIViewControllerRepresentable {
         func documentCameraViewController(_ controller: VNDocumentCameraViewController, didFinishWith scan: VNDocumentCameraScan) {
             var urls: [URL] = []
             let fm = FileManager.default
-            let dir = fm.temporaryDirectory
+            let dir: URL
+            if let docs = try? fm.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true) {
+                let assetsDir = docs.appendingPathComponent("FolioMindAssets", isDirectory: true)
+                try? fm.createDirectory(at: assetsDir, withIntermediateDirectories: true)
+                dir = assetsDir
+            } else {
+                dir = fm.temporaryDirectory
+            }
 
             for page in 0..<scan.pageCount {
                 let image = scan.imageOfPage(at: page)

@@ -53,7 +53,11 @@ final class ReminderManager {
 
     func checkPermission() -> Bool {
         let status = EKEventStore.authorizationStatus(for: .reminder)
-        return status == .authorized || status == .fullAccess
+        if #available(iOS 17.0, *) {
+            return status == .fullAccess || status == .writeOnly || status == .authorized
+        } else {
+            return status == .authorized
+        }
     }
 
     // MARK: - Reminder Creation

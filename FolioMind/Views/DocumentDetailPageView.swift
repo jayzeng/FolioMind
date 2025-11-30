@@ -31,6 +31,7 @@ struct DocumentDetailPageView: View {
     @State private var cachedDocType: DocumentType?  // Cache docType to prevent access after deletion
     @State private var isReextracting: Bool = false
     @State private var reextractError: String?
+    @State private var assetNotice: StatusNotice?
 
     enum DetailTab: String, CaseIterable {
         case overview = "Overview"
@@ -82,6 +83,12 @@ struct DocumentDetailPageView: View {
                     reextractingBanner
                         .padding(.horizontal, 16)
                         .padding(.top, 8)
+                }
+                if let notice = assetNotice {
+                    InlineStatusBanner(notice: notice)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 8)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
                 }
 
                 // Content based on selected tab
@@ -704,7 +711,12 @@ struct DocumentDetailPageView: View {
             } else {
                 // Mark as complete
                 if let eventKitID = reminder.eventKitID {
-                    try await reminderManager.completeReminder(eventKitID: eventKitID)
+                    do {
+                        try await reminderManager.completeReminder(eventKitID: eventKitID)
+                    } catch ReminderManager.ReminderError.notFound {
+                        // If the system reminder was removed externally, continue by marking local state
+                        reminder.eventKitID = nil
+                    }
                 }
                 reminder.isCompleted = true
             }
@@ -720,7 +732,11 @@ struct DocumentDetailPageView: View {
         do {
             // Delete from EventKit if exists
             if let eventKitID = reminder.eventKitID {
-                try await reminderManager.deleteReminder(eventKitID: eventKitID)
+                do {
+                    try await reminderManager.deleteReminder(eventKitID: eventKitID)
+                } catch ReminderManager.ReminderError.notFound {
+                    // If user deleted it externally, treat as success
+                }
             }
 
             // Remove from document
@@ -925,13 +941,43 @@ struct DocumentDetailPageView: View {
         do {
             _ = try await services.documentStore.reextract(document: document, in: modelContext)
             cachedDocType = document.docType
+            showAssetNotice(StatusNotice(
+                title: "Extraction refreshed",
+                subtitle: "Fields and highlights updated",
+                systemImage: "checkmark.seal.fill",
+                tint: .green,
+                isProgress: false
+            ), autoHide: 2.5)
         } catch {
             reextractError = error.localizedDescription
+            showAssetNotice(StatusNotice(
+                title: "Re-extraction failed",
+                subtitle: error.localizedDescription,
+                systemImage: "exclamationmark.triangle.fill",
+                tint: .orange,
+                isProgress: false
+            ), autoHide: 3)
         }
     }
 
     private func shareDocument() {
         showShareSheet = true
+    }
+
+    private func showAssetNotice(_ notice: StatusNotice, autoHide: Double? = nil) {
+        withAnimation(.spring(response: 0.3)) {
+            assetNotice = notice
+        }
+        if let delay = autoHide {
+            let noticeID = notice.id
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                if self.assetNotice?.id == noticeID {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        self.assetNotice = nil
+                    }
+                }
+            }
+        }
     }
 
     private func deleteDocument() {
@@ -943,7 +989,15 @@ struct DocumentDetailPageView: View {
 
     private func addNewAssets(from items: [PhotosPickerItem]) async {
         guard !items.isEmpty else { return }
+        showAssetNotice(StatusNotice(
+            title: "Adding \(items.count) image(s)…",
+            subtitle: "Saving to your library",
+            systemImage: "arrow.down.doc",
+            tint: .blue,
+            isProgress: true
+        ))
 
+        var addedCount = 0
         for item in items {
             guard let data = try? await item.loadTransferable(type: Data.self) else { continue }
 
@@ -970,8 +1024,15 @@ struct DocumentDetailPageView: View {
 
                 // Update the selected index to show the newly added asset
                 selectedAssetIndex = document.imageAssets.count - 1
+                addedCount += 1
             } catch {
-                print("Error saving asset: \(error.localizedDescription)")
+                showAssetNotice(StatusNotice(
+                    title: "Save failed",
+                    subtitle: error.localizedDescription,
+                    systemImage: "exclamationmark.triangle.fill",
+                    tint: .orange,
+                    isProgress: false
+                ), autoHide: 3)
             }
         }
 
@@ -980,6 +1041,18 @@ struct DocumentDetailPageView: View {
 
         // Clear the selection
         selectedPhotos = []
+
+        if addedCount > 0 {
+            showAssetNotice(StatusNotice(
+                title: "Images added",
+                subtitle: "Re-run extraction to refresh fields",
+                systemImage: "checkmark.circle.fill",
+                tint: .green,
+                isProgress: false
+            ), autoHide: 2.5)
+        } else {
+            assetNotice = nil
+        }
     }
 
     private func updateOrCreateField(key: String, value: String) {
@@ -1925,6 +1998,7 @@ struct AddReminderSheet: View {
     @State private var showCustomForm: Bool = false
     @State private var isCreating: Bool = false
     @State private var errorMessage: String?
+    @State private var showPermissionAlert: Bool = false
 
     private var suggestions: [ReminderSuggestion] {
         reminderManager.suggestReminders(for: document)
@@ -2022,14 +2096,43 @@ struct AddReminderSheet: View {
                 }
             }
             .disabled(isCreating)
+            .onAppear {
+                if suggestions.isEmpty {
+                    showCustomForm = true
+                }
+            }
+            .task {
+                await preflightPermission()
+            }
+            .alert("Reminders Access Needed", isPresented: $showPermissionAlert) {
+                Button("Open Settings") {
+                    if let url = URL(string: UIApplication.openSettingsURLString) {
+                        UIApplication.shared.open(url)
+                    }
+                }
+                Button("Cancel", role: .cancel) { }
+            } message: {
+                Text("Enable Reminders access in Settings to create reminders.")
+            }
         }
     }
 
     private var canCreate: Bool {
-        if showCustomForm {
+        if showCustomForm || suggestions.isEmpty {
             return !customTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         } else {
             return selectedSuggestion != nil
+        }
+    }
+
+    @MainActor
+    private func preflightPermission() async {
+        if reminderManager.checkPermission() {
+            return
+        }
+        let granted = await reminderManager.requestPermission()
+        if !granted {
+            showPermissionAlert = true
         }
     }
 
@@ -2042,6 +2145,9 @@ struct AddReminderSheet: View {
             let hasPermission = await reminderManager.requestPermission()
             guard hasPermission else {
                 errorMessage = "Permission denied. Please enable Reminders access in Settings."
+                await MainActor.run {
+                    showPermissionAlert = true
+                }
                 isCreating = false
                 return
             }

@@ -11,10 +11,18 @@ struct DocumentGridCard: View {
     let document: Document
     let score: SearchScoreComponents?
 
+    struct DisplayField: Equatable {
+        let key: String
+        let value: String
+        let confidence: Double
+    }
+
     // Cache critical properties to prevent crashes when document is deleted
     @State private var cachedDocType: DocumentType?
     @State private var cachedTitle: String = ""
     @State private var cachedDate: Date?
+    @State private var cachedOCRText: String = ""
+    @State private var cachedFields: [DisplayField] = []
 
     private var safeDocType: DocumentType {
         cachedDocType ?? .generic
@@ -40,7 +48,9 @@ struct DocumentGridCard: View {
     private var keyInfo: String? {
         switch safeDocType {
         case .creditCard:
-            let details = CardDetailsExtractor.extract(ocrText: document.ocrText, fields: document.fields)
+            let details = CardDetailsExtractor.extract(ocrText: cachedOCRText, fields: cachedFields.map {
+                Field(key: $0.key, value: $0.value, confidence: $0.confidence, source: .vision)
+            })
             if let holder = details.holder, let issuer = details.issuer {
                 return "\(holder)'s \(issuer)"
             } else if let holder = details.holder {
@@ -68,8 +78,8 @@ struct DocumentGridCard: View {
         }
 
         // Fallback to first few words of OCR text
-        if !document.ocrText.isEmpty {
-            let words = document.ocrText.split(whereSeparator: { $0.isWhitespace || $0.isNewline })
+        if !cachedOCRText.isEmpty {
+            let words = cachedOCRText.split(whereSeparator: { $0.isWhitespace || $0.isNewline })
             let preview = words.prefix(3).joined(separator: " ")
             return preview.isEmpty ? nil : preview
         }
@@ -78,7 +88,7 @@ struct DocumentGridCard: View {
     }
 
     private func fieldValue(for keys: [String]) -> String? {
-        document.fields.first(where: { keys.contains($0.key.lowercased()) })?.value
+        cachedFields.first(where: { keys.contains($0.key.lowercased()) })?.value
     }
 
     var body: some View {
@@ -187,9 +197,15 @@ struct DocumentGridCard: View {
     }
 
     private func updateCachedValues() {
+        // If the backing model is gone (deleted), avoid touching it to prevent crashes.
+        guard document.modelContext != nil else { return }
         cachedDocType = document.docType
         cachedTitle = document.title
         cachedDate = document.capturedAt ?? document.createdAt
+        cachedOCRText = document.ocrText
+        cachedFields = document.fields.map {
+            DisplayField(key: $0.key, value: $0.value, confidence: $0.confidence)
+        }
     }
 
     private func loadImage(from url: URL) -> UIImage? {
