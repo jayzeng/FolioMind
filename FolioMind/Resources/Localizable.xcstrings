@@ -918,8 +918,27 @@
         }
       }
     },
-    "Connected to http://192.168.0.144:8000" : {
-
+    "Connected to https://foliomind-backend.fly.dev/" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connected to https://foliomind-backend.fly.dev/"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已连接到 https://foliomind-backend.fly.dev/"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已連接到 https://foliomind-backend.fly.dev/"
+          }
+        }
+      }
     },
     "Copy All" : {
       "localizations" : {

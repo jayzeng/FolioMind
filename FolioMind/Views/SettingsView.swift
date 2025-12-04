@@ -71,7 +71,7 @@ struct SettingsView: View {
                                     .font(.subheadline)
                             }
 
-                            Label("Connected to http://192.168.0.144:8000", systemImage: "checkmark.circle.fill")
+                            Label("Connected to https://foliomind-backend.fly.dev/", systemImage: "checkmark.circle.fill")
                                 .font(.caption)
                                 .foregroundStyle(.green)
                         }

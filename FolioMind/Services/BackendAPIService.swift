@@ -196,8 +196,12 @@ final class BackendAPIService {
     private let baseURL: String
     private let session: URLSession
 
-    init(baseURL: String = "http://192.168.0.144:8000", session: URLSession = .shared) {
-        self.baseURL = baseURL
+    init(baseURL: String = "https://foliomind-backend.fly.dev/", session: URLSession = .shared) {
+        if baseURL.hasSuffix("/") {
+            self.baseURL = String(baseURL.dropLast())
+        } else {
+            self.baseURL = baseURL
+        }
         self.session = session
     }
 
