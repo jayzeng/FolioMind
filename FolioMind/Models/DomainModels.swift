@@ -15,6 +15,7 @@ enum DocumentType: String, Codable, CaseIterable {
     case letter
     case billStatement
     case receipt
+    case promotional
     case generic
 }
 
@@ -373,6 +374,8 @@ extension DocumentType {
             String(localized: "document.type.billStatement", defaultValue: "Bill Statement", comment: "Document type: Bill Statement")
         case .receipt:
             String(localized: "document.type.receipt", defaultValue: "Receipt", comment: "Document type: Receipt")
+        case .promotional:
+            String(localized: "document.type.promotional", defaultValue: "Promotional", comment: "Document type: Promotional Material")
         case .generic:
             String(localized: "document.type.generic", defaultValue: "Document", comment: "Document type: Generic Document")
         }

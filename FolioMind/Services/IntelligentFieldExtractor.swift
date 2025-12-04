@@ -389,6 +389,23 @@ final class IntelligentFieldExtractor {
             Only include fields you can confidently extract. Use null for missing fields.
             """
 
+        case .promotional:
+            return """
+            Extract the following fields from this promotional/marketing document. Return in JSON format:
+            {
+              "offer_description": "description of the offer or promotion",
+              "promo_code": "promotional code if any",
+              "offer_amount": "monetary value of offer (e.g. '$50 bonus')",
+              "requirements": "what the recipient needs to do to qualify",
+              "expiration_date": "when the offer expires",
+              "company": "company making the offer",
+              "phone_number": "contact phone number",
+              "website": "website or URL to use the offer",
+              "terms": "key terms and conditions"
+            }
+            Only include fields you can confidently extract. Use null for missing fields.
+            """
+
         case .generic:
             return """
             Extract key information from this document. Return in JSON format:
@@ -480,6 +497,8 @@ final class IntelligentFieldExtractor {
             return extractLetterFields(from: text)
         case .receipt:
             return extractReceiptFields(from: text)
+        case .promotional:
+            return extractPromotionalFields(from: text)
         case .generic:
             return []
         }
@@ -774,6 +793,74 @@ final class IntelligentFieldExtractor {
         return fields
     }
 
+    private func extractPromotionalFields(from text: String) -> [Field] {
+        var fields: [Field] = []
+
+        // Extract promo code
+        let promoCodePatterns = [
+            "(?:promo(?:tional)?\\s+code|offer\\s+code|use\\s+code)[:\\s]+([A-Z0-9]+)",
+            "code[:\\s]+([A-Z0-9]{4,20})"
+        ]
+
+        for pattern in promoCodePatterns {
+            if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+               let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+               let range = Range(match.range(at: 1), in: text) {
+                fields.append(Field(
+                    key: "promo_code",
+                    value: String(text[range]),
+                    confidence: 0.9,
+                    source: .vision
+                ))
+                break
+            }
+        }
+
+        // Extract offer expiration
+        let expirationPatterns = [
+            "(?:offer\\s+)?expires?[:\\s]+([A-Za-z]+\\s+\\d{1,2},?\\s+\\d{4})",
+            "(?:offer\\s+)?ends?[:\\s]+([A-Za-z]+\\s+\\d{1,2},?\\s+\\d{4})",
+            "(?:valid\\s+)?(?:through|until|by)[:\\s]+([A-Za-z]+\\s+\\d{1,2},?\\s+\\d{4})",
+            "(?:promotion\\s+)?ends?[:\\s]+(\\d{1,2}/\\d{1,2}/\\d{2,4})"
+        ]
+
+        for pattern in expirationPatterns {
+            if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+               let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+               let range = Range(match.range(at: 1), in: text) {
+                fields.append(Field(
+                    key: "offer_expiry",
+                    value: String(text[range]),
+                    confidence: 0.85,
+                    source: .vision
+                ))
+                break
+            }
+        }
+
+        // Extract offer amount
+        let offerAmountPatterns = [
+            "(?:get|earn|receive|save)\\s+\\$?(\\d{1,4}(?:,\\d{3})*)",
+            "\\$?(\\d{1,4}(?:,\\d{3})*)\\s+(?:bonus|reward|off|credit)"
+        ]
+
+        for pattern in offerAmountPatterns {
+            if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+               let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+               let range = Range(match.range(at: 1), in: text) {
+                fields.append(Field(
+                    key: "offer_amount",
+                    value: "$" + String(text[range]),
+                    confidence: 0.75,
+                    source: .vision
+                ))
+                break
+            }
+        }
+
+        return fields
+    }
+
     private func extractExpiryDate(from text: String) -> Field? {
         // Look for expiry with context
         let patterns = [
@@ -903,6 +990,8 @@ final class IntelligentFieldExtractor {
             return ["sender", "sender_address", "recipient", "recipient_address", "date", "subject", "reference_number", "key_dates", "action_required"]
         case .receipt:
             return ["merchant", "date", "time", "total", "subtotal", "tax", "payment_method", "last_four", "transaction_id", "items"]
+        case .promotional:
+            return ["offer_description", "promo_code", "offer_amount", "requirements", "expiration_date", "company", "phone_number", "website", "terms"]
         case .generic:
             return []
         }
@@ -916,7 +1005,7 @@ final class OpenAILLMService: LLMService {
     private let apiKey: String
     private let model: String
 
-    init(apiKey: String, model: String = "gpt-4o-mini") {
+    init(apiKey: String, model: String = "gpt-5-mini") {
         self.apiKey = apiKey
         self.model = model
     }

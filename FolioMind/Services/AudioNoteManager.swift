@@ -8,8 +8,18 @@
 import Foundation
 import Speech
 
+// MARK: - Protocol
+
 @MainActor
-final class AudioNoteManager {
+protocol AudioNoteManaging {
+    func transcribeIfNeeded(note: AudioNote) async throws -> String
+    func summarizeIfNeeded(note: AudioNote, transcript: String) async throws -> String
+}
+
+// MARK: - Implementation
+
+@MainActor
+final class AudioNoteManager: AudioNoteManaging {
     enum AudioNoteError: LocalizedError {
         case recognizerUnavailable
         case permissionDenied

@@ -11,11 +11,13 @@ import SwiftData
 @main
 struct FolioMindApp: App {
     @StateObject private var services = AppServices()
+    @StateObject private var languageManager = LanguageManager.shared
 
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environmentObject(services)
+                .environment(\.locale, languageManager.locale)
         }
         .modelContainer(services.modelContainer)
     }

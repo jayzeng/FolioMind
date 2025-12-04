@@ -691,6 +691,9 @@
         }
       }
     },
+    "Backend Status" : {
+
+    },
     "Belongs To" : {
       "localizations" : {
         "en" : {
@@ -780,6 +783,7 @@
       }
     },
     "Change the app language. Restart the app for the change to take effect." : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -800,6 +804,9 @@
           }
         }
       }
+    },
+    "Change the app language. The interface updates right away without restarting." : {
+
     },
     "Choose what to share" : {
       "localizations" : {
@@ -910,6 +917,9 @@
           }
         }
       }
+    },
+    "Connected to http://192.168.0.144:8000" : {
+
     },
     "Copy All" : {
       "localizations" : {
@@ -1324,6 +1334,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "信件"
+          }
+        }
+      }
+    },
+    "document.type.promotional" : {
+      "comment" : "Document type: Promotional Material",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Promotional"
           }
         }
       }
@@ -2628,6 +2650,9 @@
     "Play recording" : {
 
     },
+    "Please restart the app for this change to take effect." : {
+
+    },
     "Privacy & Security" : {
       "localizations" : {
         "en" : {
@@ -2649,6 +2674,9 @@
           }
         }
       }
+    },
+    "Processing Mode" : {
+
     },
     "Raw" : {
       "localizations" : {
@@ -3179,6 +3207,7 @@
       }
     },
     "Restart app to apply language change" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3199,6 +3228,9 @@
           }
         }
       }
+    },
+    "Restart Required" : {
+
     },
     "Rotate Failed" : {
 
@@ -3422,6 +3454,9 @@
           }
         }
       }
+    },
+    "Share recording" : {
+
     },
     "sk-proj-..." : {
       "localizations" : {
@@ -3734,6 +3769,9 @@
         }
       }
     },
+    "Use Backend Processing" : {
+
+    },
     "Use OpenAI Fallback" : {
       "localizations" : {
         "en" : {
@@ -3780,6 +3818,12 @@
       }
     },
     "Use the mic to add context or reminders." : {
+
+    },
+    "Using backend API for document classification, field extraction, and audio transcription. This provides more accurate results powered by advanced LLM models." : {
+
+    },
+    "Using on-device processing with Apple Intelligence or OpenAI. All data is processed locally on your device." : {
 
     },
     "Value" : {
@@ -3896,7 +3940,11 @@
     "We’ll summarize this note once transcription finishes." : {
 
     },
+    "Your settings have been saved." : {
+
+    },
     "Your settings have been saved. Restart the app for changes to take effect." : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {

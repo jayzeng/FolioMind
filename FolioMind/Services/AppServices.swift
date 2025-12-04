@@ -144,7 +144,7 @@ final class AppServices: ObservableObject {
     let linkingEngine: LinkingEngine
     let reminderManager: ReminderManager
     let audioRecorder: AudioRecorderService
-    let audioNoteManager: AudioNoteManager
+    let audioNoteManager: AudioNoteManaging
     let llmService: LLMService?
 
     init() {
@@ -185,63 +185,86 @@ final class AppServices: ObservableObject {
             }
         }
 
-        // Initialize intelligent field extractor with LLM
-        // Try Apple Intelligence first, fall back to OpenAI if configured
-        var llmService: LLMService? = nil
-
-        // Check user preferences
-        let useAppleIntelligence = UserDefaults.standard.bool(forKey: "use_apple_intelligence")
-        let useOpenAIFallback = UserDefaults.standard.bool(forKey: "use_openai_fallback")
-
-        // Set defaults on first launch
+        // Set default to use backend on first launch
         if !UserDefaults.standard.bool(forKey: "has_launched_before") {
-            UserDefaults.standard.set(true, forKey: "use_apple_intelligence")
-            UserDefaults.standard.set(true, forKey: "use_openai_fallback")
+            UserDefaults.standard.set(true, forKey: "use_backend_processing")
             UserDefaults.standard.set(true, forKey: "has_launched_before")
         }
 
-        // Try Apple Intelligence if enabled and available
-        if useAppleIntelligence {
-            llmService = LLMServiceFactory.create(type: .apple)
-            if llmService != nil {
-                print("✅ Apple Intelligence available for intelligent field extraction")
+        // Migration: If the backend setting doesn't exist yet (from older version), set it to true
+        if UserDefaults.standard.object(forKey: "use_backend_processing") == nil {
+            print("🔄 Migrating to backend processing mode")
+            UserDefaults.standard.set(true, forKey: "use_backend_processing")
+        }
+
+        // Check user preference for backend vs local processing (after setting defaults)
+        let useBackend = UserDefaults.standard.bool(forKey: "use_backend_processing")
+
+        var llmService: LLMService? = nil
+
+        print("⚙️ Processing mode: \(useBackend ? "Backend API" : "Local on-device")")
+
+        if useBackend {
+            // Use backend API service
+            print("🌐 Using backend API for document processing")
+            let backendService = BackendAPIService()
+            llmService = BackendLLMService(apiService: backendService)
+            analyzer = BackendDocumentAnalyzer(
+                backendService: backendService,
+                useBackendOCR: true
+            )
+            audioNoteManager = BackendAudioNoteManager(backendService: backendService)
+        } else {
+            // Use local processing with Apple Intelligence or OpenAI
+            print("📱 Using local on-device processing")
+
+            let useAppleIntelligence = UserDefaults.standard.bool(forKey: "use_apple_intelligence")
+            let useOpenAIFallback = UserDefaults.standard.bool(forKey: "use_openai_fallback")
+
+            // Try Apple Intelligence if enabled and available
+            if useAppleIntelligence {
+                llmService = LLMServiceFactory.create(type: .apple)
+                if llmService != nil {
+                    print("✅ Apple Intelligence available for intelligent field extraction")
+                }
             }
-        }
 
-        // Fallback to OpenAI if enabled and API key is configured
-        if llmService == nil && useOpenAIFallback {
-            if let apiKey = UserDefaults.standard.string(forKey: "openai_api_key"), !apiKey.isEmpty {
-                llmService = LLMServiceFactory.create(type: .openai(apiKey: apiKey))
-                print("✅ Using OpenAI for intelligent field extraction")
-            } else {
-                print("⚠️ OpenAI fallback enabled but no API key configured.")
-                print("💡 Add your API key in Settings to enable OpenAI intelligent extraction.")
+            // Fallback to OpenAI if enabled and API key is configured
+            if llmService == nil && useOpenAIFallback {
+                if let apiKey = UserDefaults.standard.string(forKey: "openai_api_key"), !apiKey.isEmpty {
+                    llmService = LLMServiceFactory.create(type: .openai(apiKey: apiKey))
+                    print("✅ Using OpenAI for intelligent field extraction")
+                } else {
+                    print("⚠️ OpenAI fallback enabled but no API key configured.")
+                    print("💡 Add your API key in Settings to enable OpenAI intelligent extraction.")
+                }
             }
+
+            if llmService == nil {
+                print("ℹ️ No LLM service available. Using pattern-based extraction only.")
+                print("💡 To enable intelligent extraction:")
+                print("   • Use iOS 18.2+ with Apple Intelligence, or")
+                print("   • Add OpenAI API key in Settings")
+            }
+
+            let intelligentExtractor = IntelligentFieldExtractor(
+                llmService: llmService,
+                useNaturalLanguage: true
+            )
+
+            analyzer = VisionDocumentAnalyzer(
+                cloudService: nil,
+                defaultType: .generic,
+                intelligentExtractor: intelligentExtractor,
+                llmService: llmService
+            )
+            audioNoteManager = AudioNoteManager(llmService: llmService)
         }
 
-        if llmService == nil {
-            print("ℹ️ No LLM service available. Using pattern-based extraction only.")
-            print("💡 To enable intelligent extraction:")
-            print("   • Use iOS 18.2+ with Apple Intelligence, or")
-            print("   • Add OpenAI API key in Settings")
-        }
-
-        let intelligentExtractor = IntelligentFieldExtractor(
-            llmService: llmService,
-            useNaturalLanguage: true
-        )
-
-        analyzer = VisionDocumentAnalyzer(
-            cloudService: nil,
-            defaultType: .generic,
-            intelligentExtractor: intelligentExtractor,
-            llmService: llmService
-        )
         embeddingService = SimpleEmbeddingService()
         linkingEngine = BasicLinkingEngine()
         reminderManager = ReminderManager()
         audioRecorder = AudioRecorderService()
-        audioNoteManager = AudioNoteManager(llmService: llmService)
         self.llmService = llmService
 
         let modelContext = ModelContext(modelContainer)
@@ -434,9 +457,13 @@ final class DocumentStore {
             throw StoreError.noAssets
         }
 
+        print("🔄 Re-extracting document: \(document.title)")
+        print("📄 Processing \(imageAssets.count) image(s)")
+
         var analyses: [DocumentAnalysisResult] = []
         for asset in imageAssets {
             let url = URL(fileURLWithPath: asset.fileURL)
+            print("🖼️  Analyzing asset: \(asset.fileURL)")
             let analysis = try await analyzer.analyze(
                 imageURL: url,
                 hints: DocumentHints(
@@ -452,12 +479,11 @@ final class DocumentStore {
         let combinedFaces = analyses.flatMap(\.faceClusters)
         let faceIDs = combinedFaces.map { $0.id }
 
-        let docType = DocumentTypeClassifier.classify(
-            ocrText: combinedOCR,
-            fields: combinedFields,
-            hinted: document.docType,
-            defaultType: document.docType
-        )
+        // Use the document type from the analyzer (which may be from backend or local)
+        // If multiple assets, prefer non-generic types
+        let docType = analyses.map(\.docType).first { $0 != .generic } ?? analyses.first?.docType ?? document.docType
+
+        print("✅ Re-extraction complete: \(docType.displayName), \(combinedFields.count) fields")
 
         var cleanedText: String? = nil
         if let llmService = llmService, !combinedOCR.isEmpty {

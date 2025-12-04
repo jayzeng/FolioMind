@@ -54,6 +54,19 @@ enum AppLanguage: String, CaseIterable, Identifiable {
             return "🇹🇼"
         }
     }
+
+    var localeIdentifier: String? {
+        switch self {
+        case .system:
+            return nil
+        case .english:
+            return "en"
+        case .simplifiedChinese:
+            return "zh-Hans"
+        case .traditionalChinese:
+            return "zh-Hant"
+        }
+    }
 }
 
 class LanguageManager: ObservableObject {
@@ -85,18 +98,7 @@ class LanguageManager: ObservableObject {
     }
 
     private func applyLanguage() {
-        let languageCode: String?
-
-        switch currentLanguage {
-        case .system:
-            languageCode = nil
-        case .english:
-            languageCode = "en"
-        case .simplifiedChinese:
-            languageCode = "zh-Hans"
-        case .traditionalChinese:
-            languageCode = "zh-Hant"
-        }
+        let languageCode = currentLanguage.localeIdentifier
 
         if let code = languageCode {
             UserDefaults.standard.set([code], forKey: "AppleLanguages")
@@ -105,25 +107,20 @@ class LanguageManager: ObservableObject {
         }
 
         UserDefaults.standard.synchronize()
+
+        // Let SwiftUI know the locale changed so views can update without a manual relaunch
+        NotificationCenter.default.post(name: NSLocale.currentLocaleDidChangeNotification, object: nil)
     }
 
     func setLanguage(_ language: AppLanguage) {
         currentLanguage = language
     }
 
-    var needsRestart: Bool {
-        // Check if the current language preference is different from what's applied
-        let appliedLanguages = UserDefaults.standard.stringArray(forKey: "AppleLanguages")
-
-        switch currentLanguage {
-        case .system:
-            return appliedLanguages != nil
-        case .english:
-            return appliedLanguages?.first != "en"
-        case .simplifiedChinese:
-            return appliedLanguages?.first != "zh-Hans"
-        case .traditionalChinese:
-            return appliedLanguages?.first != "zh-Hant"
+    var locale: Locale {
+        if let identifier = currentLanguage.localeIdentifier {
+            return Locale(identifier: identifier)
+        } else {
+            return Locale.autoupdatingCurrent
         }
     }
 }

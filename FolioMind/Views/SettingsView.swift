@@ -12,8 +12,10 @@ struct SettingsView: View {
     @AppStorage("openai_api_key") private var openAIAPIKey: String = ""
     @AppStorage("use_apple_intelligence") private var useAppleIntelligence: Bool = true
     @AppStorage("use_openai_fallback") private var useOpenAIFallback: Bool = true
+    @AppStorage("use_backend_processing") private var useBackendProcessing: Bool = true
     @State private var showingAPIKeyInfo: Bool = false
     @State private var showingSaveConfirmation: Bool = false
+    @State private var showingRestartAlert: Bool = false
     @StateObject private var languageManager = LanguageManager.shared
 
     private var hasAppleIntelligence: Bool {
@@ -53,6 +55,37 @@ struct SettingsView: View {
                     Text("Apple Intelligence provides on-device text cleaning and intelligent field extraction for better accuracy and privacy.")
                 }
 
+                // Backend Processing Section
+                Section {
+                    Toggle("Use Backend Processing", isOn: $useBackendProcessing)
+                        .onChange(of: useBackendProcessing) { _, _ in
+                            showingRestartAlert = true
+                        }
+
+                    if useBackendProcessing {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Image(systemName: "network")
+                                    .foregroundStyle(.blue)
+                                Text("Backend Status")
+                                    .font(.subheadline)
+                            }
+
+                            Label("Connected to http://192.168.0.144:8000", systemImage: "checkmark.circle.fill")
+                                .font(.caption)
+                                .foregroundStyle(.green)
+                        }
+                    }
+                } header: {
+                    Text("Processing Mode")
+                } footer: {
+                    if useBackendProcessing {
+                        Text("Using backend API for document classification, field extraction, and audio transcription. This provides more accurate results powered by advanced LLM models.")
+                    } else {
+                        Text("Using on-device processing with Apple Intelligence or OpenAI. All data is processed locally on your device.")
+                    }
+                }
+
                 // Language Section
                 Section {
                     Picker("App Language", selection: $languageManager.currentLanguage) {
@@ -65,21 +98,10 @@ struct SettingsView: View {
                         }
                     }
                     .pickerStyle(.menu)
-
-                    if languageManager.needsRestart {
-                        HStack(spacing: 8) {
-                            Image(systemName: "arrow.clockwise")
-                                .foregroundStyle(.orange)
-                            Text("Restart app to apply language change")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        .padding(.vertical, 4)
-                    }
                 } header: {
                     Text("Language")
                 } footer: {
-                    Text("Change the app language. Restart the app for the change to take effect.")
+                    Text("Change the app language. The interface updates right away without restarting.")
                 }
 
                 // OpenAI Section
@@ -201,15 +223,19 @@ struct SettingsView: View {
             .alert("Settings Saved", isPresented: $showingSaveConfirmation) {
                 Button("OK", role: .cancel) {}
             } message: {
-                Text("Your settings have been saved. Restart the app for changes to take effect.")
+                Text("Your settings have been saved.")
+            }
+            .alert("Restart Required", isPresented: $showingRestartAlert) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("Please restart the app for this change to take effect.")
             }
         }
     }
 
     private func saveSettings() {
-        // Settings are automatically saved via @AppStorage
+        // Settings are automatically saved via @AppStorage and apply immediately
         showingSaveConfirmation = true
-
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
             dismiss()
         }

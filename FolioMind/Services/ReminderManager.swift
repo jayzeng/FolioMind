@@ -269,6 +269,21 @@ final class ReminderManager {
                 priority: 5
             ))
 
+        case .promotional:
+            // Extract offer expiration if present
+            if let expiryField = document.fields.first(where: { $0.key.lowercased().contains("expir") || $0.key.lowercased().contains("offer") }) {
+                if let expiryDate = parseDate(from: expiryField.value) {
+                    let reminderDate = Calendar.current.date(byAdding: .day, value: -3, to: expiryDate) ?? expiryDate
+                    suggestions.append(ReminderSuggestion(
+                        title: "Use offer: \(document.title)",
+                        notes: "Promotional offer expires on \(formatDate(expiryDate))",
+                        dueDate: reminderDate,
+                        type: .followUp,
+                        priority: 3
+                    ))
+                }
+            }
+
         case .receipt, .generic:
             break
         }

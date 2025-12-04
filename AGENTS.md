@@ -5,6 +5,7 @@
 - `FolioMindTests/`: unit tests using Swift’s `Testing` package; mocks for analyzers/search/embedding live alongside feature tests in `FolioMindTests.swift`.
 - `FolioMindUITests/`: UI and launch performance tests using XCTest.
 - `Docs/`: repo documentation (e.g., `SPEA.md`, `step1.md`); place new guides here.
+- Backend/API planning currently lives in `Docs/ProductSpec.md`; update this doc when adding backend-facing requirements, API contracts, or data flow notes.
 
 ## Build, Test, and Development Commands
 - `open FolioMind.xcodeproj` — develop with Xcode; target `FolioMind`.
@@ -35,3 +36,4 @@
 - Ingestion pipeline: `DocumentStore.ingestDocuments` runs OCR/faces through `VisionDocumentAnalyzer` (Vision/VisionKit), merges heuristic fields (`FieldExtractor`) with optional LLM-driven `IntelligentFieldExtractor`, classifies via `DocumentTypeClassifier`, creates `Asset` records, and saves embeddings for hybrid search.
 - Intelligence: LLM integration is optional; `LLMServiceFactory` prefers Apple Foundation Models when available and can fall back to OpenAI (API key placeholder in `AppServices`—keep secrets out of commits).
 - Persistence: documents can hold multiple image assets (`assets` + `imageAssets` helpers) with computed `assetURL` for legacy access; embeddings and person links/reminders are modeled explicitly for future linking and notification features.
+- Backend/API direction: plan for a service that accepts uploads, stores files, and runs summarization/transcription/information extraction. Keep the app local-first; any client/backend bridges should be optional, respect privacy, and keep secrets/config outside source. Document API shape and data contracts in `Docs/ProductSpec.md` before implementation.

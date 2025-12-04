@@ -111,6 +111,7 @@ extension DocumentType {
         case .letter: "envelope.open.fill"
         case .billStatement: "doc.text.below.ecg"
         case .receipt: "scroll.fill"
+        case .promotional: "tag.fill"
         case .generic: "doc.richtext.fill"
         }
     }
@@ -130,6 +131,8 @@ extension DocumentType {
             colors = [Color(hue: 0.1, saturation: 0.45, brightness: 0.8), Color(hue: 0.08, saturation: 0.55, brightness: 0.62)]
         case .receipt:
             colors = [Color(hue: 0.97, saturation: 0.52, brightness: 0.86), Color(hue: 0.95, saturation: 0.6, brightness: 0.64)]
+        case .promotional:
+            colors = [Color(hue: 0.12, saturation: 0.65, brightness: 0.9), Color(hue: 0.08, saturation: 0.7, brightness: 0.72)]
         case .generic:
             colors = [Color(hue: 0.6, saturation: 0.2, brightness: 0.84), Color(hue: 0.64, saturation: 0.18, brightness: 0.68)]
         }
@@ -144,6 +147,7 @@ extension DocumentType {
         case .letter: Color(hue: 0.55, saturation: 0.34, brightness: 0.68)
         case .billStatement: Color(hue: 0.1, saturation: 0.54, brightness: 0.72)
         case .receipt: Color(hue: 0.95, saturation: 0.55, brightness: 0.74)
+        case .promotional: Color(hue: 0.1, saturation: 0.68, brightness: 0.82)
         case .generic: Color(hue: 0.62, saturation: 0.22, brightness: 0.76)
         }
     }
@@ -988,13 +992,21 @@ private struct AudioNoteRow: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
 
-                Button(role: .destructive) {
-                    onDelete()
-                } label: {
-                    Image(systemName: "trash")
-                        .font(.caption)
+                HStack(spacing: 8) {
+                    ShareLink(item: URL(fileURLWithPath: note.fileURL)) {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.borderless)
+
+                    Button(role: .destructive) {
+                        onDelete()
+                    } label: {
+                        Image(systemName: "trash")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.borderless)
                 }
-                .buttonStyle(.borderless)
             }
         }
         .padding(12)
@@ -1125,6 +1137,10 @@ private struct AudioNoteDetailView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Menu {
+                        ShareLink(item: URL(fileURLWithPath: note.fileURL)) {
+                            Label("Share recording", systemImage: "square.and.arrow.up")
+                        }
+
                         Button {
                             Task { await loadContent(force: true) }
                         } label: {
