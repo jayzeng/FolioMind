@@ -44,29 +44,45 @@ jobs:
           import os
           import subprocess
           import sys
+          import re
 
           def run_json(cmd):
               return json.loads(subprocess.check_output(cmd, text=True))
 
+          def version_tuple(rt):
+              ident = rt.get("identifier", "")
+              match = re.search(r"iOS-([0-9][0-9\-]*)", ident)
+              if match:
+                  parts = match.group(1).split("-")
+                  return tuple(int(p) for p in parts if p.isdigit())
+              version = rt.get("version", "")
+              return tuple(int(p) for p in re.findall(r"\d+", version))
+
+          def version_string(rt):
+              parts = version_tuple(rt)
+              return ".".join(str(p) for p in parts) if parts else rt.get("version", "latest")
+
           runtimes = run_json(["xcrun", "simctl", "list", "runtimes", "--json"]).get("runtimes", [])
           ios_runtimes = [
               r for r in runtimes
-              if r.get("platform") == "iOS" and r.get("isAvailable", True)
+              if r.get("platform") == "iOS"
+              and r.get("isAvailable", True)
+              and "iOS-" in r.get("identifier", "")
           ]
           if not ios_runtimes:
               print("No iOS simulator runtime is available on this runner.")
               subprocess.run(["xcrun", "simctl", "list", "runtimes"])
               sys.exit(1)
 
-          ios_runtimes.sort(key=lambda r: r.get("version") or r.get("identifier", ""), reverse=True)
+          ios_runtimes.sort(key=version_tuple, reverse=True)
           chosen_runtime = ios_runtimes[0]
           runtime_id = chosen_runtime["identifier"]
-          runtime_version = chosen_runtime.get("version") or runtime_id.rsplit(".", 1)[-1].replace("-", ".")
+          runtime_version = version_string(chosen_runtime)
 
           devicetypes = run_json(["xcrun", "simctl", "list", "devicetypes", "--json"]).get("devicetypes", [])
           available_devices = [
               d for d in devicetypes
-              if "(unavailable)" not in d.get("availability", "").lower()
+              if d.get("isAvailable", True) and "(unavailable)" not in d.get("availability", "").lower()
           ]
           preferred = next((d for d in available_devices if "iPhone 15" in d.get("name", "")), None)
           if preferred is None:
@@ -83,7 +99,16 @@ jobs:
           subprocess.run(["xcrun", "simctl", "delete", device_name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
           subprocess.check_call(["xcrun", "simctl", "create", device_name, device_type_id, runtime_id])
 
-          dest_line = f"DESTINATION=platform=iOS Simulator,OS={runtime_version},name={device_name}"
+          devices_json = run_json(["xcrun", "simctl", "list", "devices", "--json"]).get("devices", {})
+          detected_os = runtime_version
+          for rt_key, devices in devices_json.items():
+              if any(dev.get("name") == device_name for dev in devices):
+                  match = re.search(r"iOS-([0-9][0-9\-]*)", rt_key)
+                  if match:
+                      detected_os = match.group(1).replace("-", ".")
+                  break
+
+          dest_line = f"DESTINATION=platform=iOS Simulator,OS={detected_os},name={device_name}"
           with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
               env_file.write(dest_line + "\n")
           print(dest_line)
