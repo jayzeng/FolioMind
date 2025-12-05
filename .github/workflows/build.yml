@@ -1,4 +1,4 @@
-name: <i>build</i>
+name: Build
 
 on:
   push:
@@ -9,7 +9,8 @@ on:
 env:
   SCHEME: FolioMind
   XCODE_VERSION: "16.1"
-  DESTINATION: "platform=iOS Simulator,name=iPhone 15"
+  # Use ANY available simulator to avoid destination-mismatch failures
+  DESTINATION: "platform=iOS Simulator"
 
 jobs:
   build-and-test:
@@ -25,8 +26,14 @@ jobs:
       - name: Show Xcode version
         run: xcodebuild -version
 
-      - name: List available simulators
-        run: xcrun simctl list devices
+      - name: Debug Simulators
+        run: |
+          echo "== Devices =="
+          xcrun simctl list devices
+          echo "== Device Types =="
+          xcrun simctl list devicetypes
+          echo "== Runtimes =="
+          xcrun simctl list runtimes
 
       - name: Resolve Swift package dependencies
         run: |
@@ -48,8 +55,8 @@ jobs:
             -enableCodeCoverage YES \
             CODE_SIGNING_ALLOWED=NO
 
-      - name: Upload test logs
+      - name: Upload test results
         uses: actions/upload-artifact@v4
         with:
-          name: xcode-test-logs
+          name: xcode-test-results
           path: '*.xcresult'
