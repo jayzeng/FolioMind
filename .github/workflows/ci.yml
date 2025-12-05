@@ -99,16 +99,7 @@ jobs:
           subprocess.run(["xcrun", "simctl", "delete", device_name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
           subprocess.check_call(["xcrun", "simctl", "create", device_name, device_type_id, runtime_id])
 
-          devices_json = run_json(["xcrun", "simctl", "list", "devices", "--json"]).get("devices", {})
-          detected_os = runtime_version
-          for rt_key, devices in devices_json.items():
-              if any(dev.get("name") == device_name for dev in devices):
-                  match = re.search(r"iOS-([0-9][0-9\-]*)", rt_key)
-                  if match:
-                      detected_os = match.group(1).replace("-", ".")
-                  break
-
-          dest_line = f"DESTINATION=platform=iOS Simulator,OS={detected_os},name={device_name}"
+          dest_line = f"DESTINATION=platform=iOS Simulator,OS={runtime_version},name={device_name}"
           with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
               env_file.write(dest_line + "\n")
           print(dest_line)
