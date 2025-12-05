@@ -237,7 +237,7 @@ struct DocumentDetailPageView: View {
                     .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: 4)
                 }
                 .padding(16)
-                .onChange(of: selectedPhotos) { oldValue, newValue in
+                .onChange(of: selectedPhotos) { _, newValue in
                     Task {
                         await addNewAssets(from: newValue)
                     }
@@ -353,7 +353,7 @@ struct DocumentDetailPageView: View {
                     .clipShape(Capsule())
                     .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: 4)
                 }
-                .onChange(of: selectedPhotos) { oldValue, newValue in
+                .onChange(of: selectedPhotos) { _, newValue in
                     Task {
                         await addNewAssets(from: newValue)
                     }
@@ -923,8 +923,6 @@ struct DocumentDetailPageView: View {
         formatter.unitsStyle = .abbreviated
         return formatter.localizedString(for: date, relativeTo: Date())
     }
-
-
     // MARK: - Helper Functions
 
     private func fieldValue(for keys: [String]) -> String? {
@@ -1724,10 +1722,10 @@ struct FieldEditModal: View {
     let icon: String
     let color: Color
     let fieldType: FieldEditType
-    var originalValue: String? = nil
+    var originalValue: String?
     let onSave: (String) -> Void
-    var onReset: (() -> Void)? = nil
-    var onDelete: (() -> Void)? = nil
+    var onReset: (() -> Void)?
+    var onDelete: (() -> Void)?
 
     @State private var editedValue: String = ""
     @State private var selectedDate: Date = Date()
@@ -2226,6 +2224,14 @@ struct AddReminderSheet: View {
         }
     }
 
+    private struct ReminderDetails {
+        let title: String
+        let notes: String
+        let dueDate: Date
+        let type: ReminderType
+        let priority: Int
+    }
+
     private func createReminder() async {
         isCreating = true
         errorMessage = nil
@@ -2256,11 +2262,19 @@ struct AddReminderSheet: View {
                 priority = 5 // Medium
             }
 
+            let details = ReminderDetails(
+                title: title,
+                notes: notes,
+                dueDate: dueDate,
+                type: type,
+                priority: priority
+            )
+
             if let editingReminder = reminderToEdit {
-                try await updateExistingReminder(editingReminder, title: title, notes: notes, dueDate: dueDate, type: type, priority: priority)
+                try await updateExistingReminder(editingReminder, details: details)
                 onUpdate?(editingReminder)
             } else {
-                try await createNewReminder(title: title, notes: notes, dueDate: dueDate, type: type, priority: priority)
+                try await createNewReminder(details)
             }
 
             isCreating = false
@@ -2281,25 +2295,19 @@ struct AddReminderSheet: View {
         return hasPermission
     }
 
-    private func createNewReminder(
-        title: String,
-        notes: String,
-        dueDate: Date,
-        type: ReminderType,
-        priority: Int
-    ) async throws {
+    private func createNewReminder(_ details: ReminderDetails) async throws {
         let eventKitID = try await reminderManager.createReminder(
-            title: title,
-            notes: notes.isEmpty ? nil : notes,
-            dueDate: dueDate,
-            priority: priority
+            title: details.title,
+            notes: details.notes.isEmpty ? nil : details.notes,
+            dueDate: details.dueDate,
+            priority: details.priority
         )
 
         let reminder = DocumentReminder(
-            title: title,
-            notes: notes,
-            dueDate: dueDate,
-            reminderType: type,
+            title: details.title,
+            notes: details.notes,
+            dueDate: details.dueDate,
+            reminderType: details.type,
             isCompleted: false,
             eventKitID: eventKitID
         )
@@ -2310,45 +2318,41 @@ struct AddReminderSheet: View {
 
     private func updateExistingReminder(
         _ reminder: DocumentReminder,
-        title: String,
-        notes: String,
-        dueDate: Date,
-        type: ReminderType,
-        priority: Int
+        details: ReminderDetails
     ) async throws {
         // Update EventKit if we still have an identifier; otherwise create a new one
         if let eventKitID = reminder.eventKitID {
             do {
                 try await reminderManager.updateReminder(
                     eventKitID: eventKitID,
-                    title: title,
-                    notes: notes.isEmpty ? nil : notes,
-                    dueDate: dueDate,
-                    priority: priority
+                    title: details.title,
+                    notes: details.notes.isEmpty ? nil : details.notes,
+                    dueDate: details.dueDate,
+                    priority: details.priority
                 )
             } catch ReminderManager.ReminderError.notFound {
                 let newID = try await reminderManager.createReminder(
-                    title: title,
-                    notes: notes.isEmpty ? nil : notes,
-                    dueDate: dueDate,
-                    priority: priority
+                    title: details.title,
+                    notes: details.notes.isEmpty ? nil : details.notes,
+                    dueDate: details.dueDate,
+                    priority: details.priority
                 )
                 reminder.eventKitID = newID
             }
         } else {
             let newID = try await reminderManager.createReminder(
-                title: title,
-                notes: notes.isEmpty ? nil : notes,
-                dueDate: dueDate,
-                priority: priority
+                title: details.title,
+                notes: details.notes.isEmpty ? nil : details.notes,
+                dueDate: details.dueDate,
+                priority: details.priority
             )
             reminder.eventKitID = newID
         }
 
-        reminder.title = title
-        reminder.notes = notes
-        reminder.dueDate = dueDate
-        reminder.reminderType = type
+        reminder.title = details.title
+        reminder.notes = details.notes
+        reminder.dueDate = details.dueDate
+        reminder.reminderType = details.type
         try? modelContext.save()
     }
 

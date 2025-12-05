@@ -52,7 +52,10 @@ struct SettingsView: View {
                 } header: {
                     Text("Intelligence")
                 } footer: {
-                    Text("Apple Intelligence provides on-device text cleaning and intelligent field extraction for better accuracy and privacy.")
+                    Text(
+                        "Apple Intelligence provides on-device text cleaning and intelligent field extraction "
+                        + "for better accuracy and privacy."
+                    )
                 }
 
                 // Backend Processing Section
@@ -80,7 +83,10 @@ struct SettingsView: View {
                     Text("Processing Mode")
                 } footer: {
                     if useBackendProcessing {
-                        Text("Using backend API for document classification, field extraction, and audio transcription. This provides more accurate results powered by advanced LLM models.")
+                        Text(
+                            "Using backend API for document classification, field extraction, and audio transcription. "
+                            + "This provides more accurate results powered by advanced LLM models."
+                        )
                     } else {
                         Text("Using on-device processing with Apple Intelligence or OpenAI. All data is processed locally on your device.")
                     }
@@ -143,7 +149,10 @@ struct SettingsView: View {
                     Text("OpenAI Integration")
                 } footer: {
                     if useOpenAIFallback {
-                        Text("OpenAI is used as a fallback when Apple Intelligence is unavailable. Your API key is stored securely on-device and never shared with FolioMind servers.")
+                        Text(
+                            "OpenAI is used as a fallback when Apple Intelligence is unavailable. "
+                            + "Your API key is stored securely on-device and never shared with FolioMind servers."
+                        )
                     } else {
                         Text("OpenAI fallback is disabled. Only Apple Intelligence will be used for intelligent extraction.")
                     }

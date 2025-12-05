@@ -141,8 +141,8 @@ struct BackendDocumentAnalyzer: DocumentAnalyzer {
         }
 
         // Try to parse as JSON array
-        guard let data = trimmedValue.data(using: .utf8),
-              let array = try? JSONSerialization.jsonObject(with: data) as? [Any] else {
+        let data = Data(trimmedValue.utf8)
+        guard let array = try? JSONSerialization.jsonObject(with: data) as? [Any] else {
             // Failed to parse, return as-is
             return [Field(
                 key: backendField.key,

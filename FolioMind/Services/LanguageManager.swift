@@ -36,9 +36,17 @@ enum AppLanguage: String, CaseIterable, Identifiable {
         case .english:
             return String(localized: "language.english", defaultValue: "English", comment: "English language option")
         case .simplifiedChinese:
-            return String(localized: "language.simplifiedChinese", defaultValue: "Simplified Chinese", comment: "Simplified Chinese language option")
+            return String(
+                localized: "language.simplifiedChinese",
+                defaultValue: "Simplified Chinese",
+                comment: "Simplified Chinese language option"
+            )
         case .traditionalChinese:
-            return String(localized: "language.traditionalChinese", defaultValue: "Traditional Chinese", comment: "Traditional Chinese language option")
+            return String(
+                localized: "language.traditionalChinese",
+                defaultValue: "Traditional Chinese",
+                comment: "Traditional Chinese language option"
+            )
         }
     }
 

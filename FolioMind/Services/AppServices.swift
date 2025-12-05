@@ -200,7 +200,7 @@ final class AppServices: ObservableObject {
         // Check user preference for backend vs local processing (after setting defaults)
         let useBackend = UserDefaults.standard.bool(forKey: "use_backend_processing")
 
-        var llmService: LLMService? = nil
+        var llmService: LLMService?
 
         print("⚙️ Processing mode: \(useBackend ? "Backend API" : "Local on-device")")
 
@@ -298,6 +298,13 @@ final class DocumentStore {
         }
     }
 
+    struct DocumentIngestOptions {
+        var hints: DocumentHints?
+        var title: String?
+        var location: String?
+        var capturedAt: Date?
+    }
+
     private let analyzer: DocumentAnalyzer
     private let embeddingService: EmbeddingService
     private let llmService: LLMService?
@@ -348,10 +355,7 @@ final class DocumentStore {
 
     func ingestDocuments(
         from imageURLs: [URL],
-        hints: DocumentHints? = nil,
-        title: String? = nil,
-        location: String? = nil,
-        capturedAt: Date? = nil,
+        options: DocumentIngestOptions = DocumentIngestOptions(),
         in context: ModelContext
     ) async throws -> Document {
         guard !imageURLs.isEmpty else {
@@ -369,7 +373,7 @@ final class DocumentStore {
 
         var analyses: [DocumentAnalysisResult] = []
         for url in persistentURLs {
-            let analysis = try await analyzer.analyze(imageURL: url, hints: hints)
+            let analysis = try await analyzer.analyze(imageURL: url, hints: options.hints)
             analyses.append(analysis)
         }
 
@@ -377,17 +381,17 @@ final class DocumentStore {
         let combinedFields = analyses.flatMap(\.fields)
         let combinedFaces = analyses.flatMap(\.faceClusters)
         let faceIDs = combinedFaces.map { $0.id }
-        let derivedTitle = title ?? hints?.personName.map { "\($0)'s Document" }
+        let derivedTitle = options.title ?? options.hints?.personName.map { "\($0)'s Document" }
             ?? imageURLs.first!.deletingPathExtension().lastPathComponent
         let docType = DocumentTypeClassifier.classify(
             ocrText: combinedOCR,
             fields: combinedFields,
-            hinted: hints?.suggestedType ?? analyses.first?.docType,
+            hinted: options.hints?.suggestedType ?? analyses.first?.docType,
             defaultType: .generic
         )
 
         // Generate cleaned text using LLM if available
-        var cleanedText: String? = nil
+        var cleanedText: String?
         if let llmService = llmService, !combinedOCR.isEmpty {
             do {
                 cleanedText = try await llmService.cleanText(combinedOCR)
@@ -418,8 +422,8 @@ final class DocumentStore {
             cleanedText: cleanedText,
             fields: combinedFields,
             createdAt: Date(),
-            capturedAt: capturedAt ?? metadataCaptureDate ?? Date(),
-            location: cleanedLocation(location) ?? metadataLocation,
+            capturedAt: options.capturedAt ?? metadataCaptureDate ?? Date(),
+            location: cleanedLocation(options.location) ?? metadataLocation,
             assets: assets,
             personLinks: [],
             faceClusterIDs: faceIDs
@@ -485,7 +489,7 @@ final class DocumentStore {
 
         print("✅ Re-extraction complete: \(docType.displayName), \(combinedFields.count) fields")
 
-        var cleanedText: String? = nil
+        var cleanedText: String?
         if let llmService = llmService, !combinedOCR.isEmpty {
             do {
                 cleanedText = try await llmService.cleanText(combinedOCR)

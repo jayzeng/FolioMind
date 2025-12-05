@@ -54,7 +54,7 @@ struct VisionDocumentAnalyzer: DocumentAnalyzer {
     }
 
     func analyze(imageURL: URL, hints: DocumentHints?) async throws -> DocumentAnalysisResult {
-        let rawText = try await ocrSource.recognizeText(at:imageURL)
+        let rawText = try await ocrSource.recognizeText(at: imageURL)
         let cleanedText = await cleanIfPossible(rawText)
         let localText = cleanedText ?? rawText
         let faces = try await VisionFaceDetector().detectFaces(at: imageURL)
@@ -211,7 +211,13 @@ struct VisionFaceDetector {
         try handler.perform([request])
         let observations = request.results ?? []
         return observations.enumerated().map { index, face in
-            let descriptorString = "\(face.boundingBox.origin.x),\(face.boundingBox.origin.y),\(face.boundingBox.size.width),\(face.boundingBox.size.height)"
+            let descriptorValues = [
+                face.boundingBox.origin.x,
+                face.boundingBox.origin.y,
+                face.boundingBox.size.width,
+                face.boundingBox.size.height
+            ]
+            let descriptorString = descriptorValues.map { "\($0)" }.joined(separator: ",")
             return FaceCluster(
                 id: UUID(),
                 descriptor: Data(descriptorString.utf8),
@@ -224,14 +230,26 @@ struct VisionFaceDetector {
 #else
 struct VisionOCRSource: OCRSource {
     func recognizeText(at url: URL) async throws -> String {
-        throw NSError(domain: "FolioMind.Vision", code: -1, userInfo: [NSLocalizedDescriptionKey: "Vision OCR is unavailable on this platform."])
+        throw NSError(
+            domain: "FolioMind.Vision",
+            code: -1,
+            userInfo: [
+                NSLocalizedDescriptionKey: "Vision OCR is unavailable on this platform."
+            ]
+        )
     }
 }
 
 @MainActor
 struct VisionFaceDetector {
     func detectFaces(at url: URL) async throws -> [FaceCluster] {
-        throw NSError(domain: "FolioMind.Vision", code: -1, userInfo: [NSLocalizedDescriptionKey: "Vision face detection is unavailable on this platform."])
+        throw NSError(
+            domain: "FolioMind.Vision",
+            code: -1,
+            userInfo: [
+                NSLocalizedDescriptionKey: "Vision face detection is unavailable on this platform."
+            ]
+        )
     }
 }
 #endif

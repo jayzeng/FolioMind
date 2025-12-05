@@ -29,7 +29,6 @@ final class IntelligentFieldExtractor {
         self.llmService = llmService
         self.useNaturalLanguage = useNaturalLanguage
     }
-    
 
     /// Extract fields intelligently based on document type
     func extractFields(from text: String, docType: DocumentType) async throws -> [Field] {
@@ -229,7 +228,8 @@ final class IntelligentFieldExtractor {
         - "card_type": "visa | mastercard | amex | discover | other"
 
         Insurance-specific
-        - "member_name": "insured member name(s) - if multiple family members are listed, provide comma-separated names (e.g. 'JOHN DOE, JANE DOE, JIMMY DOE')"
+        - "member_name": "insured member name(s) - if multiple family members are listed,
+          provide comma-separated names (e.g. 'JOHN DOE, JANE DOE, JIMMY DOE')"
         - "member_id": "member / subscriber ID"
         - "group_number": "group number"
         - "payer_number": "payer number / payer ID (common on dental cards)"
@@ -300,7 +300,8 @@ final class IntelligentFieldExtractor {
             return """
             Extract the following fields from this insurance card. Return in JSON format:
             {
-              "member_name": "insured member name(s) - if multiple family members listed, provide comma-separated (e.g. 'JOHN DOE, JANE DOE, JIMMY DOE')",
+              "member_name": "insured member name(s) - if multiple family members listed,
+              provide comma-separated (e.g. 'JOHN DOE, JANE DOE, JIMMY DOE')",
               "member_id": "member/subscriber ID",
               "group_number": "group number",
               "payer_number": "payer number/payer ID (common on dental cards)",
@@ -315,8 +316,10 @@ final class IntelligentFieldExtractor {
             }
             Only include fields you can confidently extract. Use null for missing fields.
             IMPORTANT:
-            - If you see multiple member names (often numbered like '01 NAME1', '02 NAME2'), include ALL of them as comma-separated values in member_name.
-            - For plan_name, extract the specific plan type (like "Dental PPO" or "Enhanced Dental PPO"), not generic service names.
+            - If you see multiple member names (often numbered like '01 NAME1', '02 NAME2'),
+              include ALL of them as comma-separated values in member_name.
+            - For plan_name, extract the specific plan type (like "Dental PPO" or "Enhanced Dental PPO"),
+              not generic service names.
             """
 
         case .billStatement:
@@ -427,8 +430,8 @@ final class IntelligentFieldExtractor {
         var fields: [Field] = []
 
         // Try to parse JSON response
-        guard let data = response.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        let data = Data(response.utf8)
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return fields
         }
 
@@ -511,16 +514,13 @@ final class IntelligentFieldExtractor {
 
         // Extract card network separately from issuing bank to avoid duplicates
         let networks = ["visa", "mastercard", "unionpay", "maestro", "diners", "jcb"]
-        for network in networks {
-            if lowercased.contains(network) {
-                fields.append(Field(
-                    key: "card_type",
-                    value: network.capitalized,
-                    confidence: 0.8,
-                    source: .vision
-                ))
-                break
-            }
+        if let network = networks.first(where: { lowercased.contains($0) }) {
+            fields.append(Field(
+                key: "card_type",
+                value: network.capitalized,
+                confidence: 0.8,
+                source: .vision
+            ))
         }
 
         // Extract issuing bank/brand (include co-branded issuers like Amex/Discover)
@@ -530,16 +530,13 @@ final class IntelligentFieldExtractor {
             "chase", "citi", "capital one", "bank of america", "bofa", "boa",
             "wells fargo", "hsbc", "us bank", "td", "pnc", "barclays", "santander"
         ]
-        for issuer in issuers {
-            if lowercased.contains(issuer) {
-                fields.append(Field(
-                    key: "issuer",
-                    value: issuer.capitalized,
-                    confidence: 0.85,
-                    source: .vision
-                ))
-                break
-            }
+        if let issuer = issuers.first(where: { lowercased.contains($0) }) {
+            fields.append(Field(
+                key: "issuer",
+                value: issuer.capitalized,
+                confidence: 0.85,
+                source: .vision
+            ))
         }
 
         // Extract expiry with context
@@ -610,7 +607,18 @@ final class IntelligentFieldExtractor {
         }
 
         // Extract insurer name from known list
-        let insurers = ["aetna", "cvs health", "cvshealth", "cigna", "unitedhealthcare", "anthem", "blue cross", "blue shield", "kaiser", "humana"]
+        let insurers = [
+            "aetna",
+            "cvs health",
+            "cvshealth",
+            "cigna",
+            "unitedhealthcare",
+            "anthem",
+            "blue cross",
+            "blue shield",
+            "kaiser",
+            "humana"
+        ]
         let lower = text.lowercased()
         if let match = insurers.first(where: { lower.contains($0) }) {
             fields.append(Field(
@@ -653,7 +661,10 @@ final class IntelligentFieldExtractor {
                 source: .vision
             ))
         } else {
-            if let insurerLineIndex = lines.firstIndex(where: { $0.lowercased().contains("aetna") || $0.lowercased().contains("cvs health") }),
+            if let insurerLineIndex = lines.firstIndex(where: { line in
+                let lowerLine = line.lowercased()
+                return lowerLine.contains("aetna") || lowerLine.contains("cvs health")
+            }),
                lines.indices.contains(insurerLineIndex + 1) {
                 let candidate = lines[insurerLineIndex + 1]
                 if candidate.lowercased().contains("ppo") || candidate.lowercased().contains("dental") {
@@ -981,17 +992,71 @@ final class IntelligentFieldExtractor {
         case .creditCard:
             return ["cardholder", "card_number", "expiry_date", "issuer", "card_type"]
         case .insuranceCard:
-            return ["member_name", "member_id", "group_number", "payer_number", "policy_number", "plan_name", "insurance_company", "effective_date", "copay", "phone_number", "rx_bin", "rx_pcn"]
+            return [
+                "member_name",
+                "member_id",
+                "group_number",
+                "payer_number",
+                "policy_number",
+                "plan_name",
+                "insurance_company",
+                "effective_date",
+                "copay",
+                "phone_number",
+                "rx_bin",
+                "rx_pcn"
+            ]
         case .billStatement:
-            return ["account_number", "statement_date", "due_date", "amount_due", "minimum_payment", "previous_balance", "new_charges", "merchant", "billing_period"]
+            return [
+                "account_number",
+                "statement_date",
+                "due_date",
+                "amount_due",
+                "minimum_payment",
+                "previous_balance",
+                "new_charges",
+                "merchant",
+                "billing_period"
+            ]
         case .idCard:
-            return ["name", "id_number", "date_of_birth", "issue_date", "expiry_date", "address", "issuing_authority", "class", "height", "sex"]
+            return [
+                "name",
+                "id_number",
+                "date_of_birth",
+                "issue_date",
+                "expiry_date",
+                "address",
+                "issuing_authority",
+                "class",
+                "height",
+                "sex"
+            ]
         case .letter:
-            return ["sender", "sender_address", "recipient", "recipient_address", "date", "subject", "reference_number", "key_dates", "action_required"]
+            return [
+                "sender",
+                "sender_address",
+                "recipient",
+                "recipient_address",
+                "date",
+                "subject",
+                "reference_number",
+                "key_dates",
+                "action_required"
+            ]
         case .receipt:
             return ["merchant", "date", "time", "total", "subtotal", "tax", "payment_method", "last_four", "transaction_id", "items"]
         case .promotional:
-            return ["offer_description", "promo_code", "offer_amount", "requirements", "expiration_date", "company", "phone_number", "website", "terms"]
+            return [
+                "offer_description",
+                "promo_code",
+                "offer_amount",
+                "requirements",
+                "expiration_date",
+                "company",
+                "phone_number",
+                "website",
+                "terms"
+            ]
         case .generic:
             return []
         }
@@ -1058,7 +1123,11 @@ final class OpenAILLMService: LLMService {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let prompt = """
-        Clean up the following OCR-extracted text to make it more readable. Fix any obvious OCR errors, normalize spacing and line breaks, and format it in a clear, readable way. Preserve all important information but make it easier to read. Do not translate or summarize - just clean up the formatting and obvious errors.
+        Clean up the following OCR-extracted text to make it more readable.
+        Fix any obvious OCR errors, normalize spacing and line breaks,
+        and format it in a clear, readable way.
+        Preserve all important information but make it easier to read.
+        Do not translate or summarize - just clean up the formatting and obvious errors.
 
         Return ONLY the cleaned text, without any explanations or additional commentary.
         """
@@ -1170,7 +1239,11 @@ final class AppleLLMService: LLMService {
 
         // Construct the cleanup prompt
         let prompt = """
-        Clean up the following OCR-extracted text to make it more readable. Fix any obvious OCR errors, normalize spacing and line breaks, and format it in a clear, readable way. Preserve all important information but make it easier to read. Do not translate or summarize - just clean up the formatting and obvious errors.
+        Clean up the following OCR-extracted text to make it more readable.
+        Fix any obvious OCR errors, normalize spacing and line breaks,
+        and format it in a clear, readable way.
+        Preserve all important information but make it easier to read.
+        Do not translate or summarize - just clean up the formatting and obvious errors.
 
         Return ONLY the cleaned text, without any explanations or additional commentary.
 
