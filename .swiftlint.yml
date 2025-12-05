@@ -1,0 +1,25 @@
+disabled_rules:
+  - trailing_whitespace
+  - nesting
+  - function_body_length
+  - file_length
+  - type_body_length
+  - cyclomatic_complexity
+  - force_cast
+  - force_try
+  - todo
+
+included:
+  - FolioMind
+  - FolioMindTests
+  - FolioMindUITests
+
+excluded:
+  - FolioMind/Resources
+
+line_length:
+  warning: 140
+  error: 180
+
+identifier_name:
+  min_length: 2
