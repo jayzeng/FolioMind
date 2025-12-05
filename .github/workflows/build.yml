@@ -1,4 +1,4 @@
-name: iOS CI
+name: Build
 
 on:
   push:
@@ -26,20 +26,21 @@ jobs:
         run: xcodebuild -version
 
       - name: Resolve Swift package dependencies
-        run: xcodebuild -resolvePackageDependencies -scheme "$SCHEME"
+        run: |
+          xcodebuild -resolvePackageDependencies -scheme "$SCHEME"
 
       - name: Build
-        run: xcodebuild \
-          -scheme "$SCHEME" \
-          -destination "$DESTINATION" \
-          CODE_SIGNING_ALLOWED=NO \
-          clean build
+        run: |
+          xcodebuild \
+            -scheme "$SCHEME" \
+            -destination "$DESTINATION" \
+            CODE_SIGNING_ALLOWED=NO \
+            clean build
 
       - name: Test
-        run: xcodebuild \
-          test \
-          -scheme "$SCHEME" \
-          -destination "$DESTINATION" \
-          -enableCodeCoverage YES \
-          CODE_SIGNING_ALLOWED=NO
-
+        run: |
+          xcodebuild test \
+            -scheme "$SCHEME" \
+            -destination "$DESTINATION" \
+            -enableCodeCoverage YES \
+            CODE_SIGNING_ALLOWED=NO
