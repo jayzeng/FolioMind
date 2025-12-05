@@ -271,12 +271,15 @@ struct FolioMindTests {
         )
         let url1 = URL(fileURLWithPath: "/tmp/page1.png")
         let url2 = URL(fileURLWithPath: "/tmp/page2.png")
-        let doc = try await store.ingestDocuments(
-            from: [url1, url2],
+        let options = DocumentStore.DocumentIngestOptions(
             hints: DocumentHints(suggestedType: .receipt, personName: "Alex"),
             title: "Merged Doc",
             location: nil,
-            capturedAt: Date(),
+            capturedAt: Date()
+        )
+        let doc = try await store.ingestDocuments(
+            from: [url1, url2],
+            options: options,
             in: context
         )
 
@@ -311,10 +314,10 @@ struct FolioMindTests {
             )
         )
 
+        let options = DocumentStore.DocumentIngestOptions(title: "Metadata Doc")
         let doc = try await store.ingestDocuments(
             from: [URL(fileURLWithPath: "/tmp/page1.png")],
-            hints: nil,
-            title: "Metadata Doc",
+            options: options,
             in: context
         )
 
@@ -663,10 +666,7 @@ struct FolioMindTests {
         do {
             _ = try await store.ingestDocuments(
                 from: [],
-                hints: nil,
-                title: nil,
-                location: nil,
-                capturedAt: Date(),
+                options: DocumentStore.DocumentIngestOptions(),
                 in: context
             )
             #expect(Bool(false), "Should throw error for empty image list")
@@ -701,12 +701,13 @@ struct FolioMindTests {
         let url2 = URL(fileURLWithPath: "/tmp/page2.png")
         let url3 = URL(fileURLWithPath: "/tmp/page3.png")
 
+        let options = DocumentStore.DocumentIngestOptions(
+            title: "Multi-page Document",
+            capturedAt: Date()
+        )
         let doc = try await store.ingestDocuments(
             from: [url1, url2, url3],
-            hints: nil,
-            title: "Multi-page Document",
-            location: nil,
-            capturedAt: Date(),
+            options: options,
             in: context
         )
 

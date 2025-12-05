@@ -422,6 +422,7 @@
       }
     },
     "Apple Intelligence provides on-device text cleaning and intelligent field extraction for better accuracy and privacy." : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -2576,6 +2577,7 @@
       }
     },
     "OpenAI is used as a fallback when Apple Intelligence is unavailable. Your API key is stored securely on-device and never shared with FolioMind servers." : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3837,9 +3839,6 @@
       }
     },
     "Use the mic to add context or reminders." : {
-
-    },
-    "Using backend API for document classification, field extraction, and audio transcription. This provides more accurate results powered by advanced LLM models." : {
 
     },
     "Using on-device processing with Apple Intelligence or OpenAI. All data is processed locally on your device." : {

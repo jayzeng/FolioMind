@@ -232,7 +232,10 @@ final class ReminderManager {
                 if let dueDate = parseDate(from: dueField.value) {
                     let reminderDate = Calendar.current.date(byAdding: .day, value: -3, to: dueDate) ?? dueDate
 
-                    let amountField = document.fields.first(where: { $0.key.lowercased().contains("amount") || $0.key.lowercased().contains("balance") })
+                    let amountField = document.fields.first { field in
+                        let lowerKey = field.key.lowercased()
+                        return lowerKey.contains("amount") || lowerKey.contains("balance")
+                    }
                     let amount = amountField?.value ?? "amount due"
 
                     suggestions.append(ReminderSuggestion(
@@ -271,7 +274,10 @@ final class ReminderManager {
 
         case .promotional:
             // Extract offer expiration if present
-            if let expiryField = document.fields.first(where: { $0.key.lowercased().contains("expir") || $0.key.lowercased().contains("offer") }) {
+            if let expiryField = document.fields.first(where: { field in
+                let lowerKey = field.key.lowercased()
+                return lowerKey.contains("expir") || lowerKey.contains("offer")
+            }) {
                 if let expiryDate = parseDate(from: expiryField.value) {
                     let reminderDate = Calendar.current.date(byAdding: .day, value: -3, to: expiryDate) ?? expiryDate
                     suggestions.append(ReminderSuggestion(
@@ -296,24 +302,24 @@ final class ReminderManager {
     private func parseDate(from string: String) -> Date? {
         let formatters: [DateFormatter] = [
             {
-                let f = DateFormatter()
-                f.dateFormat = "MM/dd/yyyy"
-                return f
+                let formatter = DateFormatter()
+                formatter.dateFormat = "MM/dd/yyyy"
+                return formatter
             }(),
             {
-                let f = DateFormatter()
-                f.dateFormat = "MM/dd/yy"
-                return f
+                let formatter = DateFormatter()
+                formatter.dateFormat = "MM/dd/yy"
+                return formatter
             }(),
             {
-                let f = DateFormatter()
-                f.dateFormat = "MMM dd, yyyy"
-                return f
+                let formatter = DateFormatter()
+                formatter.dateFormat = "MMM dd, yyyy"
+                return formatter
             }(),
             {
-                let f = DateFormatter()
-                f.dateFormat = "MMMM dd, yyyy"
-                return f
+                let formatter = DateFormatter()
+                formatter.dateFormat = "MMMM dd, yyyy"
+                return formatter
             }()
         ]
 

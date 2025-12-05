@@ -74,7 +74,8 @@ final class AudioNoteManager: AudioNoteManaging {
         }
 
         let prompt = """
-        You are a concise assistant. Summarize this voice note into 2-3 short sentences highlighting the main points and any actions to take. Be brief.
+        You are a concise assistant. Summarize this voice note into 2-3 short sentences
+        highlighting the main points and any actions to take. Be brief.
         """
         do {
             let response = try await llmService.extract(prompt: prompt, text: transcript)

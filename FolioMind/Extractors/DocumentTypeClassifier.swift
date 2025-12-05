@@ -49,24 +49,36 @@ struct DocumentTypeClassifier {
 
         // PRIORITY ORDER (order matters!)
         let result: DocumentType
-        if promotionalHit { result = .promotional }      // Check FIRST
-        else if insuranceHit { result = .insuranceCard }
-        else if creditHit { result = .creditCard }
-        else if receiptHit { result = .receipt }
-        else if billHit { result = .billStatement }
-        else if letterHit { result = .letter }
-        else { result = defaultType }
+        if promotionalHit {
+            result = .promotional
+        } else if insuranceHit {
+            result = .insuranceCard
+        } else if creditHit {
+            result = .creditCard
+        } else if receiptHit {
+            result = .receipt
+        } else if billHit {
+            result = .billStatement
+        } else if letterHit {
+            result = .letter
+        } else {
+            result = defaultType
+        }
+
+        let signals = DecisionSignals(
+            promotional: promotionalHit,
+            credit: creditHit,
+            insurance: insuranceHit,
+            receipt: receiptHit,
+            bill: billHit,
+            letter: letterHit
+        )
 
         logDecision(
             text: text,
             fieldKeys: fieldKeys,
             fieldValues: fieldValues,
-            promotionalHit: promotionalHit,
-            creditHit: creditHit,
-            insuranceHit: insuranceHit,
-            receiptHit: receiptHit,
-            billHit: billHit,
-            letterHit: letterHit,
+            signals: signals,
             result: result
         )
 
@@ -494,16 +506,20 @@ struct DocumentTypeClassifier {
 
     // MARK: - Logging
 
+    private struct DecisionSignals {
+        let promotional: Bool
+        let credit: Bool
+        let insurance: Bool
+        let receipt: Bool
+        let bill: Bool
+        let letter: Bool
+    }
+
     private static func logDecision(
         text: String,
         fieldKeys: [String],
         fieldValues: [String],
-        promotionalHit: Bool,
-        creditHit: Bool,
-        insuranceHit: Bool,
-        receiptHit: Bool,
-        billHit: Bool,
-        letterHit: Bool,
+        signals: DecisionSignals,
         result: DocumentType
     ) {
 #if DEBUG
@@ -512,12 +528,12 @@ struct DocumentTypeClassifier {
         let luhnValids = candidates.filter { isLikelyPAN($0) }
         let summary = """
         [Classifier] result=\(result.rawValue)
-          promotional=\(promotionalHit)
-          insurance=\(insuranceHit)
-          credit=\(creditHit)
-          receipt=\(receiptHit)
-          bill=\(billHit)
-          letter=\(letterHit)
+          promotional=\(signals.promotional)
+          insurance=\(signals.insurance)
+          credit=\(signals.credit)
+          receipt=\(signals.receipt)
+          bill=\(signals.bill)
+          letter=\(signals.letter)
           fieldKeys=\(fieldKeys.prefix(5))
           luhnValid=\(luhnValids.count) candidates=\(candidates.count)
           expiryMatch=\(hasExpiryPattern(in: text))

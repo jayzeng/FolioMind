@@ -354,8 +354,8 @@ struct ContentView: View {
                 )
             }
             .sheet(isPresented: $showScanner) {
-                DocumentScannerView {
-                    urls in Task { try? await ingestURLs(urls) }
+                DocumentScannerView { urls in
+                    Task { try? await ingestURLs(urls) }
                 } onCancel: {
                     showScanner = false
                 } onError: { error in
@@ -371,7 +371,7 @@ struct ContentView: View {
                     DocumentEditView(document: document)
                 }
             }
-            .alert("Delete Document", isPresented: $showDeleteConfirmation, presenting: documentToDelete, actions: { document in
+            .alert("Delete Document", isPresented: $showDeleteConfirmation, presenting: documentToDelete, actions: { _ in
                 Button("Cancel", role: .cancel) {
                     documentToDelete = nil
                 }
@@ -701,10 +701,13 @@ struct ContentView: View {
                 tint: .blue,
                 isProgress: true
             ))
+            let options = DocumentStore.DocumentIngestOptions(
+                hints: DocumentHints(suggestedType: .generic, personName: nil),
+                title: baseTitle
+            )
             _ = try await services.documentStore.ingestDocuments(
                 from: urls,
-                hints: DocumentHints(suggestedType: .generic, personName: nil),
-                title: baseTitle,
+                options: options,
                 in: modelContext
             )
             showNotice(StatusNotice(
@@ -1863,10 +1866,18 @@ private struct DocumentMetadataCard: View {
                 }
 
                 if let capturedAt = document.capturedAt {
-                    MetadataRow(icon: "calendar", title: "Captured", value: capturedAt.formatted(date: .abbreviated, time: .shortened))
+                    MetadataRow(
+                        icon: "calendar",
+                        title: "Captured",
+                        value: capturedAt.formatted(date: .abbreviated, time: .shortened)
+                    )
                 }
 
-                MetadataRow(icon: "clock.arrow.circlepath", title: "Created", value: document.createdAt.formatted(date: .abbreviated, time: .shortened))
+                MetadataRow(
+                    icon: "clock.arrow.circlepath",
+                    title: "Created",
+                    value: document.createdAt.formatted(date: .abbreviated, time: .shortened)
+                )
 
                 if let location = document.location {
                     MetadataRow(icon: "mappin.and.ellipse", title: "Location", value: location)

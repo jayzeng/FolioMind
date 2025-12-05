@@ -184,9 +184,11 @@ enum FieldExtractor {
             // MM/DD/YYYY, MM-DD-YYYY
             "\\b(?:0?[1-9]|1[0-2])[/-](?:0?[1-9]|[12][0-9]|3[01])[/-](?:19|20)?\\d{2}\\b",
             // Month DD, YYYY
-            "\\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\\s+\\d{1,2},?\\s+\\d{4}\\b",
+            "\\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|"
+                + "Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\\s+\\d{1,2},?\\s+\\d{4}\\b",
             // DD Month YYYY
-            "\\b\\d{1,2}\\s+(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\\s+\\d{4}\\b"
+            "\\b\\d{1,2}\\s+(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|"
+                + "Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\\s+\\d{4}\\b"
         ]
 
         for pattern in patterns {
@@ -241,7 +243,9 @@ enum FieldExtractor {
         var fields: [Field] = []
 
         // Multi-line address pattern: street, city, state zip
-        let streetPattern = "\\d+\\s+[A-Za-z0-9\\s,.]+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr|Court|Ct|Circle|Cir|Way)[^\\n]*(?:\\n|,)[^\\n]+,\\s*[A-Z]{2}\\s+\\d{5}(?:-\\d{4})?"
+        let streetPattern =
+            "\\d+\\s+[A-Za-z0-9\\s,.]+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr|Court|Ct|Circle|Cir|Way)"
+            + "[^\\n]*(?:\\n|,)[^\\n]+,\\s*[A-Z]{2}\\s+\\d{5}(?:-\\d{4})?"
         let poBoxPattern = "P\\s*O\\.?\\s*Box\\s+\\d+[\\s\\n,]+[A-Za-z\\s]+[\\s\\n,]+[A-Z]{2}\\s+\\d{5}(?:-\\d{4})?(?:\\s+\\d{4})?"
 
         let patterns = [streetPattern, poBoxPattern]

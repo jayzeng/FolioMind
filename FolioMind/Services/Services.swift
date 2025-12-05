@@ -128,15 +128,15 @@ struct BasicLinkingEngine: LinkingEngine {
 
 // MARK: - Hybrid Search
 
-private func cosineSimilarity(_ a: [Double], _ b: [Double]) -> Double {
-    let length = min(a.count, b.count)
+private func cosineSimilarity(_ lhs: [Double], _ rhs: [Double]) -> Double {
+    let length = min(lhs.count, rhs.count)
     guard length > 0 else { return 0 }
     var dot: Double = 0
     var magA: Double = 0
     var magB: Double = 0
     for index in 0..<length {
-        let va = a[index]
-        let vb = b[index]
+        let va = lhs[index]
+        let vb = rhs[index]
         dot += va * vb
         magA += va * va
         magB += vb * vb
