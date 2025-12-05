@@ -1,4 +1,4 @@
-name: Build
+name: build
 
 on:
   push:
@@ -8,30 +8,22 @@ on:
 
 env:
   SCHEME: FolioMind
-  XCODE_VERSION: "16.1"
-  # Use ANY available simulator to avoid destination-mismatch failures
-  DESTINATION: "platform=iOS Simulator"
+  DESTINATION: "platform=iOS Simulator,name=iPhone 14"
 
 jobs:
   build-and-test:
-    runs-on: macos-14
+    runs-on: macos-13   # Intel runner with working iOS simulators
 
     steps:
       - uses: actions/checkout@v4
 
-      - uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: ${{ env.XCODE_VERSION }}
-
       - name: Show Xcode version
         run: xcodebuild -version
 
-      - name: Debug Simulators
+      - name: List simulators
         run: |
           echo "== Devices =="
           xcrun simctl list devices
-          echo "== Device Types =="
-          xcrun simctl list devicetypes
           echo "== Runtimes =="
           xcrun simctl list runtimes
 
