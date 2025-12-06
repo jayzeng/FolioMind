@@ -200,7 +200,7 @@ final class BackendAPIService {
     private let session: URLSession
     private let tokenManager: TokenManager?
 
-    init(baseURL: String = "http://192.168.0.144:8000", session: URLSession = .shared, tokenManager: TokenManager? = nil) {
+    init(baseURL: String = "https://foliomind-backend.fly.dev", session: URLSession = .shared, tokenManager: TokenManager? = nil) {
         if baseURL.hasSuffix("/") {
             self.baseURL = String(baseURL.dropLast())
         } else {

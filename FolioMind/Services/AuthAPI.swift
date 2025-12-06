@@ -12,7 +12,7 @@ actor AuthAPI {
     private let baseURL: URL
     private let session: URLSession
 
-    init(baseURL: String = "http://192.168.0.144:8000", session: URLSession = .shared) {
+    init(baseURL: String = "https://foliomind-backend.fly.dev", session: URLSession = .shared) {
         // Remove trailing slash if present
         let cleanURL = baseURL.hasSuffix("/") ? String(baseURL.dropLast()) : baseURL
         self.baseURL = URL(string: cleanURL)!
