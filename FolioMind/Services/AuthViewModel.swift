@@ -1,0 +1,183 @@
+//
+//  AuthViewModel.swift
+//  FolioMind
+//
+//  Manages Sign in with Apple flow and authentication state.
+//
+
+import AuthenticationServices
+import SwiftUI
+
+@MainActor
+final class AuthViewModel: NSObject, ObservableObject {
+    @Published var isAuthenticated = false
+    @Published var isAuthenticating = false
+    @Published var authError: AuthError?
+
+    private let authAPI = AuthAPI()
+    private let tokenManager: TokenManager
+
+    override init() {
+        self.tokenManager = TokenManager(authAPI: authAPI)
+        super.init()
+
+        Task {
+            // Check if we're already authenticated
+            isAuthenticated = await tokenManager.isAuthenticated
+
+            // Check Apple credential state on launch
+            await tokenManager.checkAppleCredentialState()
+
+            // Re-check authentication status after credential check
+            isAuthenticated = await tokenManager.isAuthenticated
+        }
+    }
+
+    // MARK: - Public API
+
+    func signInWithApple() {
+        authError = nil
+        isAuthenticating = true
+
+        let provider = ASAuthorizationAppleIDProvider()
+        let request = provider.createRequest()
+        request.requestedScopes = [.fullName, .email]
+
+        let controller = ASAuthorizationController(authorizationRequests: [request])
+        controller.delegate = self
+        controller.presentationContextProvider = self
+        controller.performRequests()
+    }
+
+    func signOut() {
+        Task {
+            do {
+                try await tokenManager.clearSession()
+
+                await MainActor.run {
+                    isAuthenticated = false
+                    authError = nil
+                }
+
+                print("✅ Signed out successfully")
+            } catch {
+                print("⚠️ Sign out error: \(error)")
+
+                await MainActor.run {
+                    authError = AuthError.appleAuthFailed(error)
+                }
+            }
+        }
+    }
+
+    /// Get a valid access token (for making authenticated API calls)
+    func getAccessToken() async throws -> String {
+        try await tokenManager.validAccessToken()
+    }
+
+    /// Get the TokenManager for direct use by services
+    func getTokenManager() -> TokenManager {
+        tokenManager
+    }
+}
+
+// MARK: - ASAuthorizationControllerDelegate
+
+extension AuthViewModel: ASAuthorizationControllerDelegate {
+    func authorizationController(
+        controller: ASAuthorizationController,
+        didCompleteWithAuthorization authorization: ASAuthorization
+    ) {
+        Task {
+            do {
+                guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential else {
+                    throw AuthError.invalidIdentityToken
+                }
+
+                guard let tokenData = credential.identityToken,
+                      let tokenString = String(data: tokenData, encoding: .utf8) else {
+                    throw AuthError.invalidIdentityToken
+                }
+
+                let appleUserID = credential.user
+
+                // Authenticate with backend
+                let session = try await authAPI.authenticateWithApple(
+                    identityToken: tokenString,
+                    appleUserID: appleUserID
+                )
+
+                // Save session
+                try await tokenManager.saveSession(session)
+
+                // Update state on main thread
+                await MainActor.run {
+                    isAuthenticated = true
+                    isAuthenticating = false
+                    authError = nil
+                    print("🔄 Auth state updated: isAuthenticated = \(isAuthenticated)")
+                }
+
+                print("✅ Sign in with Apple successful")
+
+                // Log user info if available (only on first sign-in)
+                if let email = credential.email {
+                    print("📧 Email: \(email)")
+                }
+                if let fullName = credential.fullName {
+                    let name = [fullName.givenName, fullName.familyName]
+                        .compactMap { $0 }
+                        .joined(separator: " ")
+                    if !name.isEmpty {
+                        print("👤 Name: \(name)")
+                    }
+                }
+
+            } catch let error as AuthError {
+                await MainActor.run {
+                    isAuthenticating = false
+                    authError = error
+                }
+                print("❌ Auth error: \(error.localizedDescription)")
+            } catch {
+                await MainActor.run {
+                    isAuthenticating = false
+                    authError = .appleAuthFailed(error)
+                }
+                print("❌ Auth error: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func authorizationController(
+        controller: ASAuthorizationController,
+        didCompleteWithError error: Error
+    ) {
+        Task { @MainActor in
+            isAuthenticating = false
+
+            // Check if user cancelled
+            if let authError = error as? ASAuthorizationError,
+               authError.code == .canceled {
+                self.authError = .appleAuthCancelled
+                print("ℹ️ Sign in cancelled by user")
+            } else {
+                self.authError = .appleAuthFailed(error)
+                print("❌ Sign in with Apple error: \(error.localizedDescription)")
+            }
+        }
+    }
+}
+
+// MARK: - ASAuthorizationControllerPresentationContextProviding
+
+extension AuthViewModel: ASAuthorizationControllerPresentationContextProviding {
+    func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
+        // Get the key window
+        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let window = scene.windows.first(where: { $0.isKeyWindow }) else {
+            return UIWindow()
+        }
+        return window
+    }
+}

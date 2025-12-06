@@ -146,8 +146,13 @@ final class AppServices: ObservableObject {
     let audioRecorder: AudioRecorderService
     let audioNoteManager: AudioNoteManaging
     let llmService: LLMService?
+    let authViewModel: AuthViewModel
 
     init() {
+        // Initialize authentication first
+        self.authViewModel = AuthViewModel()
+
+
         let schema = Schema([
             Document.self,
             Asset.self,
@@ -207,7 +212,7 @@ final class AppServices: ObservableObject {
         if useBackend {
             // Use backend API service
             print("🌐 Using backend API for document processing")
-            let backendService = BackendAPIService()
+            let backendService = BackendAPIService(tokenManager: authViewModel.getTokenManager())
             llmService = BackendLLMService(apiService: backendService)
             analyzer = BackendDocumentAnalyzer(
                 backendService: backendService,

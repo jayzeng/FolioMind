@@ -33,6 +33,8 @@ struct DocumentDetailPageView: View {
     @State private var isReextracting: Bool = false
     @State private var reextractError: String?
     @State private var assetNotice: StatusNotice?
+    @State private var showAddImageOptions: Bool = false
+    @State private var showScannerForAdd: Bool = false
 
     enum DetailTab: String, CaseIterable {
         case overview = "Overview"
@@ -180,6 +182,22 @@ struct DocumentDetailPageView: View {
                 Text(reextractError)
             }
         })
+        .sheet(isPresented: $showScannerForAdd) {
+            DocumentScannerView { urls in
+                Task { await addScannedAssets(from: urls) }
+            } onCancel: {
+                showScannerForAdd = false
+            } onError: { error in
+                showScannerForAdd = false
+                showAssetNotice(StatusNotice(
+                    title: "Scan failed",
+                    subtitle: error.localizedDescription,
+                    systemImage: "exclamationmark.triangle.fill",
+                    tint: .orange,
+                    isProgress: false
+                ), autoHide: 3)
+            }
+        }
         .onAppear {
             // Cache docType to prevent crashes when accessing after deletion
             cachedDocType = document.docType
@@ -222,7 +240,17 @@ struct DocumentDetailPageView: View {
                 .buttonStyle(.plain)
 
                 // Floating Add Assets button
-                PhotosPicker(selection: $selectedPhotos, maxSelectionCount: 10, matching: .images) {
+                Menu {
+                    PhotosPicker(selection: $selectedPhotos, maxSelectionCount: 10, matching: .images) {
+                        Label("Photo Library", systemImage: "photo")
+                    }
+
+                    Button {
+                        showScannerForAdd = true
+                    } label: {
+                        Label("Scan Document", systemImage: "doc.viewfinder")
+                    }
+                } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "plus.circle.fill")
                             .font(.body)
@@ -305,7 +333,17 @@ struct DocumentDetailPageView: View {
     }
 
     private var addAssetButton: some View {
-        PhotosPicker(selection: $selectedPhotos, maxSelectionCount: 10, matching: .images) {
+        Menu {
+            PhotosPicker(selection: $selectedPhotos, maxSelectionCount: 10, matching: .images) {
+                Label("Photo Library", systemImage: "photo")
+            }
+
+            Button {
+                showScannerForAdd = true
+            } label: {
+                Label("Scan Document", systemImage: "doc.viewfinder")
+            }
+        } label: {
             ZStack {
                 RoundedRectangle(cornerRadius: 8)
                     .strokeBorder(style: StrokeStyle(lineWidth: 2, dash: [5]))
@@ -339,7 +377,17 @@ struct DocumentDetailPageView: View {
                     .foregroundStyle(.white.opacity(0.7))
 
                 // Add Images button
-                PhotosPicker(selection: $selectedPhotos, maxSelectionCount: 10, matching: .images) {
+                Menu {
+                    PhotosPicker(selection: $selectedPhotos, maxSelectionCount: 10, matching: .images) {
+                        Label("Photo Library", systemImage: "photo")
+                    }
+
+                    Button {
+                        showScannerForAdd = true
+                    } label: {
+                        Label("Scan Document", systemImage: "doc.viewfinder")
+                    }
+                } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "plus.circle.fill")
                             .font(.body)
@@ -1111,6 +1159,64 @@ struct DocumentDetailPageView: View {
         if addedCount > 0 {
             showAssetNotice(StatusNotice(
                 title: "Images added",
+                subtitle: "Re-run extraction to refresh fields",
+                systemImage: "checkmark.circle.fill",
+                tint: .green,
+                isProgress: false
+            ), autoHide: 2.5)
+        } else {
+            assetNotice = nil
+        }
+    }
+
+    private func addScannedAssets(from urls: [URL]) async {
+        guard !urls.isEmpty else { return }
+        showAssetNotice(StatusNotice(
+            title: "Adding \(urls.count) scanned image(s)…",
+            subtitle: "Saving to document",
+            systemImage: "doc.viewfinder",
+            tint: .blue,
+            isProgress: true
+        ))
+
+        var addedCount = 0
+        for url in urls {
+            do {
+                // Create a new Asset and add it to the document
+                let nextPageNumber = (document.assets.map(\.pageNumber).max() ?? -1) + 1
+                let newAsset = Asset(
+                    fileURL: url.path,
+                    assetType: .image,
+                    addedAt: Date(),
+                    pageNumber: nextPageNumber
+                )
+
+                modelContext.insert(newAsset)
+                document.assets.append(newAsset)
+
+                // Update the selected index to show the newly added asset
+                selectedAssetIndex = document.imageAssets.count - 1
+                addedCount += 1
+            } catch {
+                showAssetNotice(StatusNotice(
+                    title: "Save failed",
+                    subtitle: error.localizedDescription,
+                    systemImage: "exclamationmark.triangle.fill",
+                    tint: .orange,
+                    isProgress: false
+                ), autoHide: 3)
+            }
+        }
+
+        // Save the context
+        try? modelContext.save()
+
+        // Close the scanner
+        showScannerForAdd = false
+
+        if addedCount > 0 {
+            showAssetNotice(StatusNotice(
+                title: "Scanned images added",
                 subtitle: "Re-run extraction to refresh fields",
                 systemImage: "checkmark.circle.fill",
                 tint: .green,

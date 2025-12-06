@@ -176,6 +176,7 @@ final class BackendAPIService {
         case httpError(statusCode: Int, message: String?)
         case decodingError(Error)
         case networkError(Error)
+        case authenticationRequired
 
         var errorDescription: String? {
             switch self {
@@ -189,20 +190,24 @@ final class BackendAPIService {
                 return "Failed to decode response: \(error.localizedDescription)"
             case .networkError(let error):
                 return "Network error: \(error.localizedDescription)"
+            case .authenticationRequired:
+                return "Authentication required to access this feature"
             }
         }
     }
 
     private let baseURL: String
     private let session: URLSession
+    private let tokenManager: TokenManager?
 
-    init(baseURL: String = "https://foliomind-backend.fly.dev/", session: URLSession = .shared) {
+    init(baseURL: String = "http://192.168.0.144:8000", session: URLSession = .shared, tokenManager: TokenManager? = nil) {
         if baseURL.hasSuffix("/") {
             self.baseURL = String(baseURL.dropLast())
         } else {
             self.baseURL = baseURL
         }
         self.session = session
+        self.tokenManager = tokenManager
     }
 
     // MARK: - Public API Methods
@@ -294,6 +299,12 @@ final class BackendAPIService {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
+        // Add authentication header if available
+        if let tokenManager = tokenManager {
+            let token = try await tokenManager.validAccessToken()
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+
         let encoder = JSONEncoder()
         request.httpBody = try encoder.encode(body)
 
@@ -310,6 +321,12 @@ final class BackendAPIService {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+
+        // Add authentication header if available
+        if let tokenManager = tokenManager {
+            let token = try await tokenManager.validAccessToken()
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
 
         var body = Data()
 

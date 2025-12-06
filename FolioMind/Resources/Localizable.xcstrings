@@ -199,6 +199,9 @@
         }
       }
     },
+    "Account" : {
+
+    },
     "Add" : {
       "localizations" : {
         "en" : {
@@ -531,6 +534,9 @@
           }
         }
       }
+    },
+    "Are you sure you want to sign out? You'll need to sign in again to use backend features." : {
+
     },
     "asset.type.document" : {
       "comment" : "Asset type: Document",
@@ -1886,28 +1892,6 @@
         }
       }
     },
-    "GitHub Repository" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "GitHub Repository"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "GitHub 仓库"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "GitHub 儲存庫"
-          }
-        }
-      }
-    },
     "Import" : {
       "localizations" : {
         "en" : {
@@ -2422,6 +2406,9 @@
         }
       }
     },
+    "Not signed in" : {
+
+    },
     "Notes (optional)" : {
       "localizations" : {
         "en" : {
@@ -2599,6 +2586,9 @@
         }
       }
     },
+    "Organize your documents with intelligence" : {
+
+    },
     "Original Value" : {
       "localizations" : {
         "en" : {
@@ -2667,6 +2657,9 @@
           }
         }
       }
+    },
+    "Photo Library" : {
+
     },
     "Play recording" : {
 
@@ -3300,6 +3293,9 @@
         }
       }
     },
+    "Scan Document" : {
+
+    },
     "Scanning document…" : {
       "localizations" : {
         "en" : {
@@ -3477,6 +3473,12 @@
       }
     },
     "Share recording" : {
+
+    },
+    "Sign in with Apple is required when using backend processing." : {
+
+    },
+    "Sign Out" : {
 
     },
     "sk-proj-..." : {

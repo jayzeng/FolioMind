@@ -6,5 +6,9 @@
 	<array>
 		<string>group.com.lz.studio.FolioMind</string>
 	</array>
+	<key>com.apple.developer.applesignin</key>
+	<array>
+		<string>Default</string>
+	</array>
 </dict>
 </plist>

@@ -29,9 +29,22 @@
 		69B7CF062ED3D0000025CCE7 /* FolioMindUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FolioMindUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		69D841FF2EE4E62A00C72B11 /* Exceptions for "FolioMind" folder in "FolioMind" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 69B7CEEC2ED3CFFD0025CCE7 /* FolioMind */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		69B7CEEF2ED3CFFE0025CCE7 /* FolioMind */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				69D841FF2EE4E62A00C72B11 /* Exceptions for "FolioMind" folder in "FolioMind" target */,
+			);
 			path = FolioMind;
 			sourceTree = "<group>";
 		};
@@ -403,10 +416,12 @@
 				DEVELOPMENT_TEAM = PLCQ429BJM;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = FolioMind/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Folio Mind - manage your personal files easily";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_NSCalendarsUsageDescription = "Allow FolioMind to add follow-up events to your calendar.";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Allow FolioMind to scan documents and capture photos for analysis.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "FolioMind needs to connect to your local development server for testing.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Allow FolioMind to record audio notes.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Allow FolioMind to import photos or scans for document analysis.";
 				INFOPLIST_KEY_NSRemindersUsageDescription = "Allow FolioMind to create reminders for due dates and follow-ups.";
@@ -444,10 +459,12 @@
 				DEVELOPMENT_TEAM = PLCQ429BJM;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = FolioMind/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Folio Mind - manage your personal files easily";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_NSCalendarsUsageDescription = "Allow FolioMind to add follow-up events to your calendar.";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Allow FolioMind to scan documents and capture photos for analysis.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "FolioMind needs to connect to your local development server for testing.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Allow FolioMind to record audio notes.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Allow FolioMind to import photos or scans for document analysis.";
 				INFOPLIST_KEY_NSRemindersUsageDescription = "Allow FolioMind to create reminders for due dates and follow-ups.";

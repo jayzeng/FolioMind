@@ -15,7 +15,7 @@ struct FolioMindApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            RootView()
                 .environmentObject(services)
                 .environment(\.locale, languageManager.locale)
         }

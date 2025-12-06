@@ -9,6 +9,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var services: AppServices
     @AppStorage("openai_api_key") private var openAIAPIKey: String = ""
     @AppStorage("use_apple_intelligence") private var useAppleIntelligence: Bool = true
     @AppStorage("use_openai_fallback") private var useOpenAIFallback: Bool = true
@@ -16,6 +17,7 @@ struct SettingsView: View {
     @State private var showingAPIKeyInfo: Bool = false
     @State private var showingSaveConfirmation: Bool = false
     @State private var showingRestartAlert: Bool = false
+    @State private var showingSignOutConfirmation: Bool = false
     @StateObject private var languageManager = LanguageManager.shared
 
     private var hasAppleIntelligence: Bool {
@@ -188,6 +190,33 @@ struct SettingsView: View {
                     Text("Privacy & Security")
                 }
 
+                // Account Section
+                if useBackendProcessing {
+                    Section {
+                        if services.authViewModel.isAuthenticated {
+                            Button(role: .destructive) {
+                                showingSignOutConfirmation = true
+                            } label: {
+                                HStack {
+                                    Image(systemName: "rectangle.portrait.and.arrow.right")
+                                    Text("Sign Out")
+                                }
+                            }
+                        } else {
+                            HStack {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundStyle(.orange)
+                                Text("Not signed in")
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    } header: {
+                        Text("Account")
+                    } footer: {
+                        Text("Sign in with Apple is required when using backend processing.")
+                    }
+                }
+
                 // About Section
                 Section {
                     HStack {
@@ -197,15 +226,6 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                     }
 
-                    Link(destination: URL(string: "https://github.com/your-repo/foliomind")!) {
-                        HStack {
-                            Text("GitHub Repository")
-                            Spacer()
-                            Image(systemName: "arrow.up.forward")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
                 } header: {
                     Text("About")
                 }
@@ -238,6 +258,14 @@ struct SettingsView: View {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text("Please restart the app for this change to take effect.")
+            }
+            .alert("Sign Out", isPresented: $showingSignOutConfirmation) {
+                Button("Cancel", role: .cancel) {}
+                Button("Sign Out", role: .destructive) {
+                    services.authViewModel.signOut()
+                }
+            } message: {
+                Text("Are you sure you want to sign out? You'll need to sign in again to use backend features.")
             }
         }
     }
