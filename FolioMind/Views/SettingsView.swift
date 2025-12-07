@@ -12,88 +12,25 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var services: AppServices
     @Environment(\.modelContext) private var modelContext
-    @AppStorage("openai_api_key") private var openAIAPIKey: String = ""
-    @AppStorage("use_apple_intelligence") private var useAppleIntelligence: Bool = true
-    @AppStorage("use_openai_fallback") private var useOpenAIFallback: Bool = true
-    @AppStorage("use_backend_processing") private var useBackendProcessing: Bool = true
-    @State private var showingAPIKeyInfo: Bool = false
-    @State private var showingSaveConfirmation: Bool = false
-    @State private var showingRestartAlert: Bool = false
     @State private var showingSignOutConfirmation: Bool = false
     @StateObject private var languageManager = LanguageManager.shared
-
-    private var hasAppleIntelligence: Bool {
-        LLMServiceFactory.create(type: .apple) != nil
-    }
 
     var body: some View {
         NavigationStack {
             Form {
-                // Intelligence Section
+                // About Section
                 Section {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Image(systemName: "brain.head.profile")
-                                .foregroundStyle(.blue)
-                            Text("Apple Intelligence")
-                                .font(.headline)
-                        }
-
-                        if hasAppleIntelligence {
-                            Label("Available on this device", systemImage: "checkmark.circle.fill")
-                                .font(.caption)
-                                .foregroundStyle(.green)
-                        } else {
-                            Label("Requires iOS 18.2+ or later", systemImage: "info.circle")
-                                .font(.caption)
-                                .foregroundStyle(.orange)
-                        }
+                    HStack {
+                        Text("Version")
+                        Spacer()
+                        Text("1.0.0")
+                            .foregroundStyle(.secondary)
                     }
-                    .padding(.vertical, 4)
 
-                    Toggle("Use Apple Intelligence", isOn: $useAppleIntelligence)
-                        .disabled(!hasAppleIntelligence)
                 } header: {
-                    Text("Intelligence")
-                } footer: {
-                    Text(
-                        "Apple Intelligence provides on-device text cleaning and intelligent field extraction for better accuracy and privacy."
-                    )
+                    Text("About")
                 }
-
-                // Backend Processing Section
-                Section {
-                    Toggle("Use Backend Processing", isOn: $useBackendProcessing)
-                        .onChange(of: useBackendProcessing) { _, _ in
-                            showingRestartAlert = true
-                        }
-
-                    if useBackendProcessing {
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                Image(systemName: "network")
-                                    .foregroundStyle(.blue)
-                                Text("Backend Status")
-                                    .font(.subheadline)
-                            }
-
-                            Label("Connected to https://foliomind-backend.fly.dev/", systemImage: "checkmark.circle.fill")
-                                .font(.caption)
-                                .foregroundStyle(.green)
-                        }
-                    }
-                } header: {
-                    Text("Processing Mode")
-                } footer: {
-                    if useBackendProcessing {
-                        Text(
-                            "Using backend API for document classification, field extraction, and audio transcription. This provides more accurate results powered by advanced LLM models."
-                        )
-                    } else {
-                        Text("Using on-device processing with Apple Intelligence or OpenAI. All data is processed locally on your device.")
-                    }
-                }
-
+                
                 // Language Section
                 Section {
                     Picker("App Language", selection: $languageManager.currentLanguage) {
@@ -110,53 +47,6 @@ struct SettingsView: View {
                     Text("Language")
                 } footer: {
                     Text("Change the app language. The interface updates right away without restarting.")
-                }
-
-                // OpenAI Section
-                Section {
-                    Toggle("Use OpenAI Fallback", isOn: $useOpenAIFallback)
-
-                    if useOpenAIFallback {
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                Text("API Key")
-                                    .font(.subheadline)
-                                Spacer()
-                                Button {
-                                    showingAPIKeyInfo = true
-                                } label: {
-                                    Image(systemName: "info.circle")
-                                        .foregroundStyle(.blue)
-                                }
-                            }
-
-                            SecureField("sk-proj-...", text: $openAIAPIKey)
-                                .textContentType(.password)
-                                .autocorrectionDisabled()
-                                .textInputAutocapitalization(.never)
-                                .font(.system(.body, design: .monospaced))
-
-                            if !openAIAPIKey.isEmpty {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .foregroundStyle(.green)
-                                    Text("API key configured")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                        }
-                    }
-                } header: {
-                    Text("OpenAI Integration")
-                } footer: {
-                    if useOpenAIFallback {
-                        Text(
-                            "OpenAI is used as a fallback when Apple Intelligence is unavailable. Your API key is stored securely on-device and never shared with FolioMind servers."
-                        )
-                    } else {
-                        Text("OpenAI fallback is disabled. Only Apple Intelligence will be used for intelligent extraction.")
-                    }
                 }
 
                 // Privacy Section
@@ -190,43 +80,44 @@ struct SettingsView: View {
                 }
 
                 // Account Section
-                if useBackendProcessing {
-                    Section {
-                        if services.authViewModel.isAuthenticated {
-                            Button(role: .destructive) {
-                                showingSignOutConfirmation = true
-                            } label: {
-                                HStack {
-                                    Image(systemName: "rectangle.portrait.and.arrow.right")
-                                    Text("Sign Out")
-                                }
-                            }
-                        } else {
+                Section {
+                    if services.authViewModel.isAuthenticated {
+                        if let name = services.authViewModel.userName {
                             HStack {
-                                Image(systemName: "exclamationmark.triangle.fill")
-                                    .foregroundStyle(.orange)
-                                Text("Not signed in")
+                                Text("Name")
                                     .foregroundStyle(.secondary)
+                                Spacer()
+                                Text(name)
                             }
                         }
-                    } header: {
-                        Text("Account")
-                    } footer: {
-                        Text("Sign in with Apple is required when using backend processing.")
-                    }
-                }
 
-                // About Section
-                Section {
-                    HStack {
-                        Text("Version")
-                        Spacer()
-                        Text("1.0.0")
-                            .foregroundStyle(.secondary)
-                    }
+                        if let email = services.authViewModel.userEmail {
+                            HStack {
+                                Text("Email")
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Text(email)
+                            }
+                        }
 
+                        Button(role: .destructive) {
+                            showingSignOutConfirmation = true
+                        } label: {
+                            HStack {
+                                Image(systemName: "rectangle.portrait.and.arrow.right")
+                                Text("Sign Out")
+                            }
+                        }
+                    } else {
+                        HStack {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                            Text("Not signed in")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 } header: {
-                    Text("About")
+                    Text("Account")
                 }
             }
             .navigationTitle("Settings")
@@ -234,29 +125,9 @@ struct SettingsView: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
-                        saveSettings()
+                        dismiss()
                     }
                 }
-            }
-            .alert("API Key Information", isPresented: $showingAPIKeyInfo) {
-                Button("OK", role: .cancel) {}
-                Button("Get API Key") {
-                    if let url = URL(string: "https://platform.openai.com/api-keys") {
-                        UIApplication.shared.open(url)
-                    }
-                }
-            } message: {
-                Text("To use OpenAI features, you need an API key from OpenAI. Get one at platform.openai.com/api-keys")
-            }
-            .alert("Settings Saved", isPresented: $showingSaveConfirmation) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text("Your settings have been saved.")
-            }
-            .alert("Restart Required", isPresented: $showingRestartAlert) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text("Please restart the app for this change to take effect.")
             }
             .alert("Sign Out", isPresented: $showingSignOutConfirmation) {
                 Button("Cancel", role: .cancel) {}
@@ -266,14 +137,6 @@ struct SettingsView: View {
             } message: {
                 Text("Are you sure you want to sign out? You'll need to sign in again to use backend features.")
             }
-        }
-    }
-
-    private func saveSettings() {
-        // Settings are automatically saved via @AppStorage and apply immediately
-        showingSaveConfirmation = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            dismiss()
         }
     }
 }

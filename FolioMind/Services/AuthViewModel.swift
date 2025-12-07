@@ -57,6 +57,10 @@ final class AuthViewModel: NSObject, ObservableObject {
                 await MainActor.run {
                     isAuthenticated = false
                     authError = nil
+
+                    // Clear stored user info
+                    UserDefaults.standard.removeObject(forKey: "user_email")
+                    UserDefaults.standard.removeObject(forKey: "user_name")
                 }
 
                 print("✅ Signed out successfully")
@@ -68,6 +72,16 @@ final class AuthViewModel: NSObject, ObservableObject {
                 }
             }
         }
+    }
+
+    /// Get the user's email if available
+    var userEmail: String? {
+        UserDefaults.standard.string(forKey: "user_email")
+    }
+
+    /// Get the user's name if available
+    var userName: String? {
+        UserDefaults.standard.string(forKey: "user_name")
     }
 
     /// Get a valid access token (for making authenticated API calls)
@@ -120,9 +134,10 @@ extension AuthViewModel: ASAuthorizationControllerDelegate {
 
                 print("✅ Sign in with Apple successful")
 
-                // Log user info if available (only on first sign-in)
+                // Save user info if available (only on first sign-in)
                 if let email = credential.email {
                     print("📧 Email: \(email)")
+                    UserDefaults.standard.set(email, forKey: "user_email")
                 }
                 if let fullName = credential.fullName {
                     let name = [fullName.givenName, fullName.familyName]
@@ -130,6 +145,7 @@ extension AuthViewModel: ASAuthorizationControllerDelegate {
                         .joined(separator: " ")
                     if !name.isEmpty {
                         print("👤 Name: \(name)")
+                        UserDefaults.standard.set(name, forKey: "user_name")
                     }
                 }
 

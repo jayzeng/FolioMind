@@ -417,7 +417,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = FolioMind/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "Folio Mind - manage your personal files easily";
+				INFOPLIST_KEY_CFBundleDisplayName = "Folio Mind";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_NSCalendarsUsageDescription = "Allow FolioMind to add follow-up events to your calendar.";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Allow FolioMind to scan documents and capture photos for analysis.";
@@ -460,7 +460,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = FolioMind/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "Folio Mind - manage your personal files easily";
+				INFOPLIST_KEY_CFBundleDisplayName = "Folio Mind";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_NSCalendarsUsageDescription = "Allow FolioMind to add follow-up events to your calendar.";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Allow FolioMind to scan documents and capture photos for analysis.";
