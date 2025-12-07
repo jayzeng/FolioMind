@@ -6,10 +6,12 @@
 //
 
 import SwiftUI
+import SwiftData
 
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var services: AppServices
+    @Environment(\.modelContext) private var modelContext
     @AppStorage("openai_api_key") private var openAIAPIKey: String = ""
     @AppStorage("use_apple_intelligence") private var useAppleIntelligence: Bool = true
     @AppStorage("use_openai_fallback") private var useOpenAIFallback: Bool = true
