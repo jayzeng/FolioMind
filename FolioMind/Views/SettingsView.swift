@@ -57,8 +57,7 @@ struct SettingsView: View {
                     Text("Intelligence")
                 } footer: {
                     Text(
-                        "Apple Intelligence provides on-device text cleaning and intelligent field extraction "
-                        + "for better accuracy and privacy."
+                        "Apple Intelligence provides on-device text cleaning and intelligent field extraction for better accuracy and privacy."
                     )
                 }
 
@@ -88,8 +87,7 @@ struct SettingsView: View {
                 } footer: {
                     if useBackendProcessing {
                         Text(
-                            "Using backend API for document classification, field extraction, and audio transcription. "
-                            + "This provides more accurate results powered by advanced LLM models."
+                            "Using backend API for document classification, field extraction, and audio transcription. This provides more accurate results powered by advanced LLM models."
                         )
                     } else {
                         Text("Using on-device processing with Apple Intelligence or OpenAI. All data is processed locally on your device.")
@@ -154,8 +152,7 @@ struct SettingsView: View {
                 } footer: {
                     if useOpenAIFallback {
                         Text(
-                            "OpenAI is used as a fallback when Apple Intelligence is unavailable. "
-                            + "Your API key is stored securely on-device and never shared with FolioMind servers."
+                            "OpenAI is used as a fallback when Apple Intelligence is unavailable. Your API key is stored securely on-device and never shared with FolioMind servers."
                         )
                     } else {
                         Text("OpenAI fallback is disabled. Only Apple Intelligence will be used for intelligent extraction.")
@@ -283,8 +280,8 @@ struct SettingsView: View {
 
 struct PrivacyRow: View {
     let icon: String
-    let title: String
-    let description: String
+    let title: LocalizedStringKey
+    let description: LocalizedStringKey
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {

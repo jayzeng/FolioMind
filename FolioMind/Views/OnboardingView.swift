@@ -78,9 +78,7 @@ struct OnboardingView: View {
             heroStack
                 .padding(.horizontal, 24)
 
-            Text("Capture receipts, IDs, letters and more. "
-                + "FolioMind remembers people, dates, and details "
-                + "so you can stop digging for that one document.")
+            Text("Capture receipts, IDs, letters and more. FolioMind remembers people, dates, and details so you can stop digging for that one document.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -220,9 +218,7 @@ struct OnboardingView: View {
             .padding(.horizontal, 24)
             .padding(.top, 6)
 
-            Text("You’re always in control. You can delete sample data, "
-                + "change your goal, or adjust privacy and backend options "
-                + "later in Settings.")
+            Text("You’re always in control. You can delete sample data, change your goal, or adjust privacy and backend options later in Settings.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -235,7 +231,9 @@ struct OnboardingView: View {
     private var bottomBar: some View {
         HStack {
             Button {
-                if currentPage > 0 {
+                if currentPage == 0 {
+                    onFinished()
+                } else {
                     withAnimation(.easeInOut) {
                         currentPage -= 1
                     }

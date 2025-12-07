@@ -427,7 +427,7 @@ final class DocumentStore {
             Rent payment receipt
             Amount: \(amount)
             """
-            return (
+            return StubMetadata(
                 title: title,
                 docType: .receipt,
                 subtitle: vendor,
@@ -450,7 +450,7 @@ final class DocumentStore {
             Member ID: FM-2748392
             Plan: \(plan)
             """
-            return (
+            return StubMetadata(
                 title: title,
                 docType: .insuranceCard,
                 subtitle: member,
@@ -473,7 +473,7 @@ final class DocumentStore {
             Patient: \(child)
             Follow-up in 6 months.
             """
-            return (
+            return StubMetadata(
                 title: title,
                 docType: .letter,
                 subtitle: clinic,
@@ -495,7 +495,7 @@ final class DocumentStore {
             \(holder)
             Document No: XK3928471
             """
-            return (
+            return StubMetadata(
                 title: title,
                 docType: .idCard,
                 subtitle: holder,

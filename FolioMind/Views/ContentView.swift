@@ -710,9 +710,7 @@ struct ContentView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Label("Want to just look around?", systemImage: "sparkles")
                         .font(.subheadline.weight(.semibold))
-                    Text("Add a tiny demo folio with a few fake documents "
-                        + "so you can explore search, details, and reminders "
-                        + "before committing your own.")
+                    Text("Add a tiny demo folio with a few fake documents so you can explore search, details, and reminders before committing your own.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                     Button {

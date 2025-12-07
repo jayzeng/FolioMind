@@ -265,6 +265,28 @@
         }
       }
     },
+    "Add a tiny demo folio with a few fake documents so you can explore search, details, and reminders before committing your own." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add a tiny demo folio with a few fake documents so you can explore search, details, and reminders before committing your own."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添加一个包含少量示例文档的小演示文档集，让您在投入自己的文档前先体验搜索、详情和提醒。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新增一個包含少量範例文件的小型示範文件集，讓您在投入自己的文件前先體驗搜尋、詳情與提醒。"
+          }
+        }
+      }
+    },
     "Add Images" : {
       "localizations" : {
         "en" : {
@@ -419,6 +441,28 @@
         }
       }
     },
+    "API keys are encrypted and stored in iOS Keychain" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "API keys are encrypted and stored in iOS Keychain"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "API 密钥经过加密并存储在 iOS 钥匙串中"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "API 金鑰會加密後儲存在 iOS 鑰匙圈中"
+          }
+        }
+      }
+    },
     "App Language" : {
       "localizations" : {
         "en" : {
@@ -488,7 +532,6 @@
       }
     },
     "Apple Intelligence provides on-device text cleaning and intelligent field extraction for better accuracy and privacy." : {
-      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -890,6 +933,29 @@
         }
       }
     },
+    "Capture a lab result, referral, or bill so the important numbers are searchable, not buried in paper." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Capture a lab result, referral, or bill so the important numbers are searchable, not buried in paper."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "拍下化验结果、转诊单或账单，让重要数字可以被搜索，而不是埋在纸堆里。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "拍下驗血結果、轉診單或帳單，讓重要數字可以被搜尋，而不是埋在紙堆裡。"
+          }
+        }
+      }
+    },
     "Capture quick voice notes" : {
       "localizations" : {
         "en" : {
@@ -908,6 +974,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "快速擷取語音備忘"
+          }
+        }
+      }
+    },
+    "Capture receipts, IDs, letters and more. FolioMind remembers people, dates, and details so you can stop digging for that one document." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Capture receipts, IDs, letters and more. FolioMind remembers people, dates, and details so you can stop digging for that one document."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "捕捉收据、证件、信件等各种文档。FolioMind 记住人物、日期和细节，让您不必再辛苦翻找那一份文件。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "擷取收據、證件、信件等各種文件。FolioMind 記住人物、日期與細節，讓您不必再辛苦翻找那一份文件。"
           }
         }
       }
@@ -1485,6 +1573,29 @@
         }
       }
     },
+    "Document scanning is unavailable on this device." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Document scanning is unavailable on this device."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此设备不支持文档扫描。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此裝置不支援文件掃描。"
+          }
+        }
+      }
+    },
     "Document Type" : {
       "localizations" : {
         "en" : {
@@ -1653,7 +1764,6 @@
     },
     "document.type.promotional" : {
       "comment" : "Document type: Promotional Material",
-      "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -1695,6 +1805,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "收據"
+          }
+        }
+      }
+    },
+    "Documents and OCR are processed on-device by default" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Documents and OCR are processed on-device by default"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "文档和 OCR 默认在本机处理"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "文件與 OCR 預設在本機處理"
           }
         }
       }
@@ -2257,6 +2389,29 @@
         }
       }
     },
+    "Give family docs a safe home" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Give family docs a safe home"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "给家庭文件一个安全的家"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "給家庭文件一個安全的家"
+          }
+        }
+      }
+    },
     "Import" : {
       "localizations" : {
         "en" : {
@@ -2364,6 +2519,52 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "智慧"
+          }
+        }
+      }
+    },
+    "Keep health paperwork at hand" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep health paperwork at hand"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "让健康相关文件随手可得"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "讓健康相關文件隨手可得"
+          }
+        }
+      }
+    },
+    "Keep your IDs in one place" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep your IDs in one place"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "把所有证件集中在一起"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "把所有證件集中在一起"
           }
         }
       }
@@ -2486,6 +2687,51 @@
         }
       }
     },
+    "Let’s catch your next receipt" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Let’s catch your next receipt"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "抓住您的下一张收据"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "掌握您的下一張收據"
+          }
+        }
+      }
+    },
+    "Local-First" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Local-First"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本地优先"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本機優先"
+          }
+        }
+      }
+    },
     "Location" : {
       "localizations" : {
         "en" : {
@@ -2592,6 +2838,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "太棒了——這是您的第一個文件集！"
+          }
+        }
+      }
+    },
+    "No Cloud Storage" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No Cloud Storage"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不使用云端存储"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不使用雲端儲存"
           }
         }
       }
@@ -3038,7 +3306,6 @@
       }
     },
     "OpenAI is used as a fallback when Apple Intelligence is unavailable. Your API key is stored securely on-device and never shared with FolioMind servers." : {
-      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3982,6 +4249,29 @@
         }
       }
     },
+    "Scan a passport, license, or insurance card so you have a trusted backup whenever you need the details." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scan a passport, license, or insurance card so you have a trusted backup whenever you need the details."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "扫描护照、驾照或保险卡，这样在需要细节时就有可靠的备份。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "掃描護照、駕照或保險卡，這樣在需要細節時就有可靠的備份。"
+          }
+        }
+      }
+    },
     "Scan Document" : {
       "localizations" : {
         "en" : {
@@ -4022,6 +4312,52 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "掃描或匯入"
+          }
+        }
+      }
+    },
+    "Scan something from your wallet or import a photo to see FolioMind analyze and organize it for you." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scan something from your wallet or import a photo to see FolioMind analyze and organize it for you."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "扫描钱包里的任意票据，或导入一张照片，让 FolioMind 为您分析并整理。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "掃描錢包裡的任意單據，或匯入一張照片，讓 FolioMind 為您分析並整理。"
+          }
+        }
+      }
+    },
+    "Scan the next bill, rent slip, or reimbursement so you never have to dig through email or boxes again." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scan the next bill, rent slip, or reimbursement so you never have to dig through email or boxes again."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "扫描下一张账单、房租收据或报销单，这样就不用再在邮箱或纸箱里翻找。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "掃描下一張帳單、房租收據或報銷單，這樣就不用再在信箱或紙箱裡翻找。"
           }
         }
       }
@@ -4110,6 +4446,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "正在搜尋…"
+          }
+        }
+      }
+    },
+    "Secure Keys" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Secure Keys"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "安全密钥"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "安全金鑰"
           }
         }
       }
@@ -4396,6 +4754,29 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "開始整理"
+          }
+        }
+      }
+    },
+    "Start with a school form, pet record, or shared bill so everyone’s paperwork has a quiet home." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Start with a school form, pet record, or shared bill so everyone’s paperwork has a quiet home."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "从一份学校表格、宠物档案或共享账单开始，让每个人的文件都有安稳的归宿。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "從一份學校表格、寵物紀錄或共用帳單開始，讓每個人的文件都有安穩的歸宿。"
           }
         }
       }
@@ -4841,6 +5222,28 @@
         }
       }
     },
+    "Using backend API for document classification, field extraction, and audio transcription. This provides more accurate results powered by advanced LLM models." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Using backend API for document classification, field extraction, and audio transcription. This provides more accurate results powered by advanced LLM models."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用后端 API 进行文档分类、字段提取和语音转录，由先进的大模型提供更准确的结果。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用後端 API 進行文件分類、欄位擷取與語音轉錄，由先進的大型模型提供更精準的結果。"
+          }
+        }
+      }
+    },
     "Using on-device processing with Apple Intelligence or OpenAI. All data is processed locally on your device." : {
       "localizations" : {
         "en" : {
@@ -5172,6 +5575,28 @@
         }
       }
     },
+    "You’re always in control. You can delete sample data, change your goal, or adjust privacy and backend options later in Settings." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You’re always in control. You can delete sample data, change your goal, or adjust privacy and backend options later in Settings."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "您始终掌控一切。可以随时删除示例数据、调整目标，或在“设置”中修改隐私和后端选项。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "您始終掌控一切。可隨時刪除範例資料、調整目標，或在「設定」中修改隱私與後端選項。"
+          }
+        }
+      }
+    },
     "Your docs, with context" : {
       "localizations" : {
         "en" : {
@@ -5190,6 +5615,51 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "讓文件具備更多脈絡"
+          }
+        }
+      }
+    },
+    "Your documents stay on your device unless you choose to share them" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your documents stay on your device unless you choose to share them"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "除非您选择分享，否则文档始终保留在您的设备上"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "除非您選擇分享，否則文件始終保留在您的裝置上"
+          }
+        }
+      }
+    },
+    "Your folio is waiting" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your folio is waiting"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "您的文档集已准备就绪"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "您的文件集已準備就緒"
           }
         }
       }
