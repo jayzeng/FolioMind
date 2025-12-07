@@ -15,6 +15,7 @@ import Vision
 struct BackendDocumentAnalyzer: DocumentAnalyzer {
     let backendService: BackendAPIService
     let ocrSource: OCRSource?
+    /// Allow backend OCR as a fallback when on-device OCR is unavailable or empty.
     let useBackendOCR: Bool
 
     init(
@@ -28,17 +29,19 @@ struct BackendDocumentAnalyzer: DocumentAnalyzer {
     }
 
     func analyze(imageURL: URL, hints: DocumentHints?) async throws -> DocumentAnalysisResult {
-        // Decide whether to use backend OCR or local OCR
+        // Prefer on-device OCR (VisionKit) to speed up backend processing
         let analysisResult: AnalysisData
 
-        if useBackendOCR {
-            // Upload image to backend for complete processing (OCR + classification + extraction)
-            print("📤 Uploading image to backend for full analysis...")
+        do {
+            let ocrText = try await performLocalOCR(at: imageURL)
+            guard !ocrText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw LocalOCRError.emptyText
+            }
+            analysisResult = try await analyzeWithOCRText(ocrText, hints: hints)
+        } catch {
+            guard useBackendOCR else { throw error }
+            print("⚠️ Local OCR unavailable or empty (\(error.localizedDescription)), uploading image for backend OCR...")
             analysisResult = try await analyzeWithBackendOCR(imageURL: imageURL, hints: hints)
-        } else {
-            // Use local OCR + backend classification/extraction
-            print("🔍 Using local OCR + backend analysis...")
-            analysisResult = try await analyzeWithLocalOCR(imageURL: imageURL, hints: hints)
         }
 
         // Detect faces locally
@@ -64,6 +67,20 @@ struct BackendDocumentAnalyzer: DocumentAnalyzer {
         let docType: DocumentType
     }
 
+    private enum LocalOCRError: LocalizedError {
+        case unavailable
+        case emptyText
+
+        var errorDescription: String? {
+            switch self {
+            case .unavailable:
+                return "Local OCR is unavailable on this platform."
+            case .emptyText:
+                return "Local OCR returned empty text."
+            }
+        }
+    }
+
     private func analyzeWithBackendOCR(imageURL: URL, hints: DocumentHints?) async throws -> AnalysisData {
         let response = try await backendService.uploadImage(imageURL)
 
@@ -74,30 +91,25 @@ struct BackendDocumentAnalyzer: DocumentAnalyzer {
         )
     }
 
-    private func analyzeWithLocalOCR(imageURL: URL, hints: DocumentHints?) async throws -> AnalysisData {
-        // Perform local OCR
-        let ocrText: String
+    private func performLocalOCR(at imageURL: URL) async throws -> String {
         if let ocrSource {
-            ocrText = try await ocrSource.recognizeText(at: imageURL)
-        } else {
-            #if canImport(Vision)
-            #if canImport(VisionKit)
-            if #available(iOS 16.0, *) {
-                ocrText = try await VisionKitOCRSource().recognizeText(at: imageURL)
-            } else {
-                ocrText = try await VisionOCRSource().recognizeText(at: imageURL)
-            }
-            #else
-            ocrText = try await VisionOCRSource().recognizeText(at: imageURL)
-            #endif
-            #else
-            throw NSError(domain: "FolioMind.OCR", code: -1, userInfo: [NSLocalizedDescriptionKey: "OCR is unavailable on this platform."])
-            #endif
+            return try await ocrSource.recognizeText(at: imageURL)
         }
 
-        print("📝 OCR extracted \(ocrText.count) characters")
+        #if canImport(Vision)
+        #if canImport(VisionKit)
+        if #available(iOS 16.0, *) {
+            return try await VisionKitOCRSource().recognizeText(at: imageURL)
+        }
+        #endif
+        return try await VisionOCRSource().recognizeText(at: imageURL)
+        #else
+        throw LocalOCRError.unavailable
+        #endif
+    }
 
-        // Send OCR text to backend for analysis
+    private func analyzeWithOCRText(_ ocrText: String, hints: DocumentHints?) async throws -> AnalysisData {
+        print("📝 OCR extracted \(ocrText.count) characters")
         print("🌐 Sending text to backend for classification and extraction...")
         let response = try await backendService.analyze(
             ocrText: ocrText,

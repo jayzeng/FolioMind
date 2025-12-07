@@ -141,6 +141,7 @@ final class AppServices: ObservableObject {
     let documentStore: DocumentStore
     let analyzer: DocumentAnalyzer
     let searchEngine: SearchEngine
+    let libSQLStore: LibSQLStore?
     let embeddingService: EmbeddingService
     let linkingEngine: LinkingEngine
     let reminderManager: ReminderManager
@@ -148,6 +149,7 @@ final class AppServices: ObservableObject {
     let audioNoteManager: AudioNoteManaging
     let llmService: LLMService?
     let authViewModel: AuthViewModel
+    let useBackendProcessing: Bool
 
     init() {
         // Initialize authentication first
@@ -206,6 +208,15 @@ final class AppServices: ObservableObject {
         let useBackend = UserDefaults.standard.bool(forKey: "use_backend_processing")
 
         var llmService: LLMService?
+        let libSQLStore: LibSQLStore?
+
+        do {
+            libSQLStore = try LibSQLStore()
+            print("✅ LibSQLStore initialized for on-device search index")
+        } catch {
+            libSQLStore = nil
+            print("⚠️ LibSQLStore unavailable: \(error.localizedDescription)")
+        }
 
         print("⚙️ Processing mode: \(useBackend ? "Backend API" : "Local on-device")")
 
@@ -271,13 +282,31 @@ final class AppServices: ObservableObject {
         reminderManager = ReminderManager()
         audioRecorder = AudioRecorderService()
         self.llmService = llmService
+        self.libSQLStore = libSQLStore
+        self.useBackendProcessing = useBackend
 
         let modelContext = ModelContext(modelContainer)
-        searchEngine = HybridSearchEngine(
-            modelContext: modelContext,
-            embeddingService: embeddingService
+        if let libSQLStore {
+            searchEngine = LibSQLSearchEngine(
+                modelContext: modelContext,
+                embeddingService: embeddingService,
+                libSQLStore: libSQLStore
+            )
+        } else {
+            searchEngine = HybridSearchEngine(
+                modelContext: modelContext,
+                embeddingService: embeddingService
+            )
+        }
+
+        documentStore = DocumentStore(
+            analyzer: analyzer,
+            embeddingService: embeddingService,
+            llmService: llmService,
+            metadataExtractor: ImageMetadataExtractor(),
+            libSQLStore: libSQLStore,
+            useBackendProcessing: useBackend
         )
-        documentStore = DocumentStore(analyzer: analyzer, embeddingService: embeddingService, llmService: llmService)
 
         // Migrate existing files to App Group container
         Task {
@@ -285,6 +314,17 @@ final class AppServices: ObservableObject {
                 try await FileStorageManager.shared.migrateExistingFiles()
             } catch {
                 print("⚠️ File migration failed: \(error)")
+            }
+        }
+
+        if let libSQLStore {
+            Task { @MainActor in
+                let descriptor = FetchDescriptor<Document>()
+                if let documents = try? modelContext.fetch(descriptor) {
+                    for document in documents {
+                        try? libSQLStore.upsertDocument(document, embedding: document.embedding)
+                    }
+                }
             }
         }
     }
@@ -326,17 +366,23 @@ final class DocumentStore {
     private let llmService: LLMService?
     private let metadataExtractor: ImageMetadataExtracting
     private let storageManager = FileStorageManager.shared
+    private let libSQLStore: LibSQLStore?
+    private let useBackendProcessing: Bool
 
     init(
         analyzer: DocumentAnalyzer,
         embeddingService: EmbeddingService,
         llmService: LLMService? = nil,
-        metadataExtractor: ImageMetadataExtracting = ImageMetadataExtractor()
+        metadataExtractor: ImageMetadataExtracting = ImageMetadataExtractor(),
+        libSQLStore: LibSQLStore? = nil,
+        useBackendProcessing: Bool = false
     ) {
         self.analyzer = analyzer
         self.embeddingService = embeddingService
         self.llmService = llmService
         self.metadataExtractor = metadataExtractor
+        self.libSQLStore = libSQLStore
+        self.useBackendProcessing = useBackendProcessing
     }
 
     @MainActor
@@ -378,12 +424,22 @@ final class DocumentStore {
         context.insert(embedding)
         document.embedding = embedding
         try context.save()
+
+        if let libSQLStore {
+            try? libSQLStore.upsertDocument(document, embedding: embedding)
+        }
+
         return document
     }
 
     func delete(at offsets: IndexSet, from documents: [Document], in context: ModelContext) {
         for index in offsets {
-            context.delete(documents[index])
+            let document = documents[index]
+            let id = document.id
+            context.delete(document)
+            if let libSQLStore {
+                try? libSQLStore.deleteDocument(id: id)
+            }
         }
         try? context.save()
     }
@@ -395,11 +451,16 @@ final class DocumentStore {
         guard !samples.isEmpty else { return 0 }
 
         for document in samples {
+            let id = document.id
             for asset in document.imageAssets {
                 let url = URL(fileURLWithPath: asset.fileURL)
                 try? storageManager.deleteFile(at: url)
             }
             context.delete(document)
+
+            if let libSQLStore {
+                try? libSQLStore.deleteDocument(id: id)
+            }
         }
 
         try context.save()
@@ -663,6 +724,61 @@ final class DocumentStore {
             .first
         let metadataCaptureDate = metadataSnapshots.compactMap { $0.captureDate }.sorted().first
 
+        // Create Asset objects for each image
+        let assets = persistentURLs.enumerated().map { index, url in
+            Asset(
+                fileURL: url.path,
+                assetType: .image,
+                addedAt: Date(),
+                pageNumber: index
+            )
+        }
+        assets.forEach { context.insert($0) }
+
+        let now = Date()
+        let derivedTitle = options.title ?? options.hints?.personName.map { "\($0)'s Document" }
+            ?? imageURLs.first!.deletingPathExtension().lastPathComponent
+
+        let initialDocType = options.hints?.suggestedType ?? .generic
+        let initialCapturedAt = options.capturedAt ?? metadataCaptureDate ?? now
+        let initialLocation = cleanedLocation(options.location) ?? metadataLocation
+
+        let document = Document(
+            title: derivedTitle,
+            docType: initialDocType,
+            ocrText: "",
+            cleanedText: nil,
+            fields: [],
+            createdAt: now,
+            capturedAt: initialCapturedAt,
+            location: initialLocation,
+            assets: assets,
+            personLinks: [],
+            faceClusterIDs: [],
+            embedding: nil,
+            reminders: [],
+            isSample: false,
+            processingStatus: useBackendProcessing ? .processing : .completed
+        )
+
+        context.insert(document)
+        try context.save()
+
+        if let libSQLStore {
+            try? libSQLStore.upsertDocument(document, embedding: nil)
+        }
+
+        if useBackendProcessing {
+            scheduleBackendProcessing(
+                document: document,
+                assetURLs: persistentURLs,
+                options: options,
+                in: context
+            )
+            return document
+        }
+
+        // Local/on-device processing path: run full analysis inline
         var analyses: [DocumentAnalysisResult] = []
         for url in persistentURLs {
             let analysis = try await analyzer.analyze(imageURL: url, hints: options.hints)
@@ -673,8 +789,6 @@ final class DocumentStore {
         let combinedFields = analyses.flatMap(\.fields)
         let combinedFaces = analyses.flatMap(\.faceClusters)
         let faceIDs = combinedFaces.map { $0.id }
-        let derivedTitle = options.title ?? options.hints?.personName.map { "\($0)'s Document" }
-            ?? imageURLs.first!.deletingPathExtension().lastPathComponent
         let docType = DocumentTypeClassifier.classify(
             ocrText: combinedOCR,
             fields: combinedFields,
@@ -696,36 +810,129 @@ final class DocumentStore {
         combinedFields.forEach { context.insert($0) }
         combinedFaces.forEach { context.insert($0) }
 
-        // Create Asset objects for each image
-        let assets = persistentURLs.enumerated().map { index, url in
-            Asset(
-                fileURL: url.path,
-                assetType: .image,
-                addedAt: Date(),
-                pageNumber: index
-            )
-        }
-        assets.forEach { context.insert($0) }
+        document.docType = docType
+        document.ocrText = combinedOCR
+        document.cleanedText = cleanedText
+        document.fields = combinedFields
+        document.faceClusterIDs = faceIDs
+        document.processingStatus = .completed
+        document.lastProcessingError = nil
 
-        let document = Document(
-            title: derivedTitle,
-            docType: docType,
-            ocrText: combinedOCR,
-            cleanedText: cleanedText,
-            fields: combinedFields,
-            createdAt: Date(),
-            capturedAt: options.capturedAt ?? metadataCaptureDate ?? Date(),
-            location: cleanedLocation(options.location) ?? metadataLocation,
-            assets: assets,
-            personLinks: [],
-            faceClusterIDs: faceIDs
-        )
-        context.insert(document)
         let embedding = try await embeddingService.embedDocument(document)
         context.insert(embedding)
         document.embedding = embedding
         try context.save()
+
+        if let libSQLStore {
+            try? libSQLStore.upsertDocument(document, embedding: embedding)
+        }
+
         return document
+    }
+
+    private func scheduleBackendProcessing(
+        document: Document,
+        assetURLs: [URL],
+        options: DocumentIngestOptions,
+        in context: ModelContext
+    ) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.runBackendProcessing(
+                document: document,
+                assetURLs: assetURLs,
+                options: options,
+                in: context
+            )
+        }
+    }
+
+    @MainActor
+    private func runBackendProcessing(
+        document: Document,
+        assetURLs: [URL],
+        options: DocumentIngestOptions,
+        in context: ModelContext
+    ) async {
+        let maxAttempts = 3
+        var attempt = 0
+
+        while attempt < maxAttempts {
+            attempt += 1
+            document.processingStatus = .processing
+            document.lastProcessingError = nil
+
+            do {
+                var analyses: [DocumentAnalysisResult] = []
+                for url in assetURLs {
+                    let analysis = try await analyzer.analyze(imageURL: url, hints: options.hints)
+                    analyses.append(analysis)
+                }
+
+                let combinedOCR = analyses.map(\.ocrText).joined(separator: "\n\n")
+                let combinedFields = analyses.flatMap(\.fields)
+                let combinedFaces = analyses.flatMap(\.faceClusters)
+                let faceIDs = combinedFaces.map { $0.id }
+                let docType = DocumentTypeClassifier.classify(
+                    ocrText: combinedOCR,
+                    fields: combinedFields,
+                    hinted: options.hints?.suggestedType ?? analyses.first?.docType,
+                    defaultType: .generic
+                )
+
+                var cleanedText: String?
+                if let llmService = llmService, !combinedOCR.isEmpty {
+                    do {
+                        cleanedText = try await llmService.cleanText(combinedOCR)
+                    } catch {
+                        print("Text cleaning failed (backend processing): \(error.localizedDescription)")
+                    }
+                }
+
+                combinedFields.forEach { context.insert($0) }
+                combinedFaces.forEach { context.insert($0) }
+
+                document.docType = docType
+                document.ocrText = combinedOCR
+                document.cleanedText = cleanedText
+
+                document.fields.forEach { context.delete($0) }
+                document.fields = combinedFields
+                document.faceClusterIDs = faceIDs
+
+                let embedding = try await embeddingService.embedDocument(document)
+                if let existingEmbedding = document.embedding {
+                    existingEmbedding.vector = embedding.vector
+                    existingEmbedding.source = embedding.source
+                    existingEmbedding.entityType = embedding.entityType
+                    existingEmbedding.entityID = embedding.entityID
+                } else {
+                    context.insert(embedding)
+                    document.embedding = embedding
+                }
+
+                document.processingStatus = .completed
+                document.lastProcessingError = nil
+
+                try context.save()
+
+                if let libSQLStore {
+                    try? libSQLStore.upsertDocument(document, embedding: document.embedding)
+                }
+
+                return
+            } catch {
+                print("Backend processing attempt \(attempt) failed: \(error)")
+                document.processingStatus = .failed
+                document.lastProcessingError = error.localizedDescription
+                try? context.save()
+
+                if attempt < maxAttempts {
+                    let delaySeconds = Double(attempt) * 3.0
+                    try? await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
+                }
+            }
+        }
     }
 
     // MARK: - Asset Persistence
@@ -815,6 +1022,37 @@ final class DocumentStore {
         }
 
         try context.save()
+
+        if let libSQLStore {
+            try? libSQLStore.upsertDocument(document, embedding: document.embedding)
+        }
+
         return document
+    }
+
+    /// Schedule re-extraction in the background so the caller does not need to await.
+    @MainActor
+    func scheduleReextract(
+        document: Document,
+        in context: ModelContext
+    ) {
+        document.processingStatus = .processing
+        document.lastProcessingError = nil
+        try? context.save()
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+
+            do {
+                let updated = try await self.reextract(document: document, in: context)
+                updated.processingStatus = .completed
+                updated.lastProcessingError = nil
+                try? context.save()
+            } catch {
+                document.processingStatus = .failed
+                document.lastProcessingError = error.localizedDescription
+                try? context.save()
+            }
+        }
     }
 }

@@ -271,7 +271,26 @@ final class BackendAPIService {
         }
 
         let imageData = try Data(contentsOf: imageURL)
-        return try await uploadFile(url: url, fileData: imageData, fileName: "image.jpg", mimeType: "image/jpeg")
+        let fileName = imageURL.lastPathComponent.isEmpty ? "image.jpg" : imageURL.lastPathComponent
+
+        let mimeType: String
+        switch imageURL.pathExtension.lowercased() {
+        case "jpg", "jpeg":
+            mimeType = "image/jpeg"
+        case "png":
+            mimeType = "image/png"
+        case "heic":
+            mimeType = "image/heic"
+        default:
+            mimeType = "image/jpeg"
+        }
+
+        return try await uploadImageFile(
+            url: url,
+            fileData: imageData,
+            fileName: fileName,
+            mimeType: mimeType
+        )
     }
 
     /// Upload audio for transcription, classification, and extraction
@@ -336,6 +355,46 @@ final class BackendAPIService {
         body.append(Data("Content-Type: \(mimeType)\r\n\r\n".utf8))
         body.append(fileData)
         body.append(Data("\r\n".utf8))
+        body.append(Data("--\(boundary)--\r\n".utf8))
+
+        request.httpBody = body
+
+        return try await performRequest(request)
+    }
+
+    /// Specialized image upload that sends the file under both "file" and "image" field names
+    /// for compatibility with different backend expectations.
+    private func uploadImageFile<R: Decodable>(
+        url: URL,
+        fileData: Data,
+        fileName: String,
+        mimeType: String
+    ) async throws -> R {
+        let boundary = UUID().uuidString
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+
+        // Add authentication header if available
+        if let tokenManager = tokenManager {
+            let token = try await tokenManager.validAccessToken()
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+
+        var body = Data()
+
+        func appendPart(fieldName: String) {
+            body.append(Data("--\(boundary)\r\n".utf8))
+            body.append(Data("Content-Disposition: form-data; name=\"\(fieldName)\"; filename=\"\(fileName)\"\r\n".utf8))
+            body.append(Data("Content-Type: \(mimeType)\r\n\r\n".utf8))
+            body.append(fileData)
+            body.append(Data("\r\n".utf8))
+        }
+
+        // Send under both "file" and "image" keys to be robust to backend expectations.
+        appendPart(fieldName: "file")
+        appendPart(fieldName: "image")
+
         body.append(Data("--\(boundary)--\r\n".utf8))
 
         request.httpBody = body

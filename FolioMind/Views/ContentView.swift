@@ -176,6 +176,9 @@ struct ContentView: View {
     @State private var statusNotice: StatusNotice?
     @State private var selectedSpotlightID: String?
     @State private var noteToShow: AudioNote?
+    @State private var reviewURLs: [URL] = []
+    @State private var reviewTitle: String?
+    @State private var showOCRReview: Bool = false
 
     private var scannerAvailable: Bool {
         DocumentScannerView.isAvailable
@@ -367,13 +370,31 @@ struct ContentView: View {
             }
             .sheet(isPresented: $showScanner) {
                 DocumentScannerView { urls in
-                    Task { try? await ingestURLs(urls) }
+                    showScanner = false
+                    Task { @MainActor in
+                        presentReview(for: urls, preferredTitle: urls.first?.deletingPathExtension().lastPathComponent)
+                    }
                 } onCancel: {
                     showScanner = false
                 } onError: { error in
                     showScanner = false
                     errorMessage = error.localizedDescription
                 }
+            }
+            .sheet(isPresented: $showOCRReview) {
+                OCRReviewView(
+                    urls: reviewURLs,
+                    onCancel: {
+                        cancelReview()
+                    },
+                    onConfirm: { processed in
+                        showOCRReview = false
+                        Task {
+                            try? await ingestURLs(processed, preferredTitle: reviewTitle)
+                            clearReviewState()
+                        }
+                    }
+                )
             }
             .sheet(isPresented: $showSettings) {
                 SettingsView()
@@ -710,7 +731,10 @@ struct ContentView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Label("Want to just look around?", systemImage: "sparkles")
                         .font(.subheadline.weight(.semibold))
-                    Text("Add a tiny demo folio with a few fake documents so you can explore search, details, and reminders before committing your own.")
+                    Text(
+                        "Add a tiny demo folio with a few fake documents so you can explore search, details, " +
+                        "and reminders before committing your own."
+                    )
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                     Button {
@@ -879,9 +903,9 @@ struct ContentView: View {
         guard let item else { return }
         isImporting = true
         showNotice(StatusNotice(
-            title: "Importing photo…",
-            subtitle: "Saving and analyzing",
-            systemImage: "arrow.down.circle",
+            title: "Preparing preview…",
+            subtitle: "Detecting text before processing",
+            systemImage: "text.viewfinder",
             tint: .blue,
             isProgress: true
         ))
@@ -897,14 +921,14 @@ struct ContentView: View {
                 .appendingPathExtension("jpg")
             try data.write(to: tempURL)
             let title = item.itemIdentifier ?? tempURL.deletingPathExtension().lastPathComponent
-            try await ingestURLs([tempURL], preferredTitle: title)
             showNotice(StatusNotice(
-                title: "Photo imported",
-                subtitle: "Document created from \(title)",
-                systemImage: "checkmark.circle.fill",
-                tint: .green,
+                title: "Review detected text",
+                subtitle: "Rotate or crop before processing \"\(title)\"",
+                systemImage: "text.viewfinder",
+                tint: .blue,
                 isProgress: false
             ), autoHide: 2.5)
+            presentReview(for: [tempURL], preferredTitle: title)
         } catch {
             errorMessage = error.localizedDescription
             showNotice(StatusNotice(
@@ -918,6 +942,28 @@ struct ContentView: View {
     }
 
     @MainActor
+    private func presentReview(for urls: [URL], preferredTitle: String?) {
+        guard !urls.isEmpty else { return }
+        clearReviewState()
+        reviewURLs = urls
+        reviewTitle = preferredTitle
+        showOCRReview = true
+    }
+
+    @MainActor
+    private func cancelReview() {
+        clearReviewState()
+        showOCRReview = false
+    }
+
+    @MainActor
+    private func clearReviewState() {
+        reviewURLs.forEach { try? FileManager.default.removeItem(at: $0) }
+        reviewURLs.removeAll()
+        reviewTitle = nil
+    }
+
+    @MainActor
     private func ingestURLs(_ urls: [URL], preferredTitle: String? = nil) async throws {
         guard !urls.isEmpty else { return }
         isScanning = true
@@ -928,8 +974,8 @@ struct ContentView: View {
         let baseTitle = preferredTitle ?? urls.first!.deletingPathExtension().lastPathComponent
         do {
             showNotice(StatusNotice(
-                title: "Processing \(urls.count) image(s)…",
-                subtitle: "Running OCR, classification, embeddings",
+                title: "Saving \(urls.count) image(s)…",
+                subtitle: "Persisting to your device",
                 systemImage: "sparkles.rectangle.stack",
                 tint: .blue,
                 isProgress: true
@@ -938,18 +984,28 @@ struct ContentView: View {
                 hints: DocumentHints(suggestedType: .generic, personName: nil),
                 title: baseTitle
             )
-            _ = try await services.documentStore.ingestDocuments(
+            let document = try await services.documentStore.ingestDocuments(
                 from: urls,
                 options: options,
                 in: modelContext
             )
-            showNotice(StatusNotice(
-                title: "Document ready",
-                subtitle: "\"\(baseTitle)\" processed",
-                systemImage: "checkmark.seal.fill",
-                tint: .green,
-                isProgress: false
-            ), autoHide: 2.5)
+            if document.processingStatus == .processing && services.useBackendProcessing {
+                showNotice(StatusNotice(
+                    title: "Uploaded – analyzing in background",
+                    subtitle: "\"\(baseTitle)\" is being processed",
+                    systemImage: "hourglass.circle.fill",
+                    tint: .blue,
+                    isProgress: false
+                ), autoHide: 3)
+            } else {
+                showNotice(StatusNotice(
+                    title: "Document ready",
+                    subtitle: "\"\(baseTitle)\" processed",
+                    systemImage: "checkmark.seal.fill",
+                    tint: .green,
+                    isProgress: false
+                ), autoHide: 2.5)
+            }
         } catch {
             errorMessage = error.localizedDescription
             showNotice(StatusNotice(

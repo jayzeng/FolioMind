@@ -143,6 +143,8 @@
 - `VisionDocumentAnalyzer`:
   - Uses Vision/VisionKit OCR, face detection, field extraction merge (pattern + intelligent), optional cloud enrichment hook.
   - Cleans text via LLM when available.
+- `BackendDocumentAnalyzer`:
+  - Prefers on-device VisionKit/Vision OCR and sends text to the backend for classification/extraction; uploads images for backend OCR only when local OCR is unavailable or empty to reduce latency.
 - `FieldExtractor`:
   - Heuristic extraction for phones, emails, URLs, dates (context-aware keys), addresses, amounts, names; deduplication.
 - `DocumentTypeClassifier`:
@@ -158,7 +160,7 @@
 
 ## UX Flows (current)
 1) Landing: `ContentView` loads documents via `@Query`, shows status banners for search/import/scan, displays grid or empty state.
-2) Import: pick image -> async load data -> temp file -> `ingestDocuments` -> grid updates; error message on failure.
+2) Import: pick image/scan -> OCR review sheet surfaces detected text with rotate/auto-crop -> processed temp files -> `ingestDocuments` -> grid updates; error message on failure.
 3) Scan: VisionKit sheet -> returns page URLs -> `ingestDocuments`; availability gating with fallback error alert.
 4) Search: type into search bar -> async search -> shows results grid or "No results" state; match badges shown.
 5) Detail: tap card -> `DocumentDetailPageView` with hero image, tabs, highlights, metadata picker, OCR, reminders section placeholder, share menu, edit sheet, delete alert.

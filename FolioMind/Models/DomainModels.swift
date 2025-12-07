@@ -66,6 +66,12 @@ enum ReminderType: String, Codable, CaseIterable {
     case custom
 }
 
+enum ProcessingStatus: String, Codable, CaseIterable {
+    case completed
+    case processing
+    case failed
+}
+
 @Model
 final class AudioNote {
     @Attribute(.unique) var id: UUID
@@ -312,6 +318,8 @@ final class Document {
     var embedding: Embedding?
     var reminders: [DocumentReminder]
     var isSample: Bool
+    var processingStatus: ProcessingStatus?
+    var lastProcessingError: String?
 
     init(
         id: UUID = UUID(),
@@ -328,7 +336,9 @@ final class Document {
         faceClusterIDs: [UUID] = [],
         embedding: Embedding? = nil,
         reminders: [DocumentReminder] = [],
-        isSample: Bool = false
+        isSample: Bool = false,
+        processingStatus: ProcessingStatus? = nil,
+        lastProcessingError: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -345,6 +355,8 @@ final class Document {
         self.embedding = embedding
         self.reminders = reminders
         self.isSample = isSample
+        self.processingStatus = processingStatus
+        self.lastProcessingError = lastProcessingError
     }
 
     // Computed property for backward compatibility - returns first asset URL

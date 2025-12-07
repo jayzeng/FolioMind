@@ -200,3 +200,100 @@ final class HybridSearchEngine: SearchEngine {
         return cosineSimilarity(vector, queryEmbedding)
     }
 }
+
+// MARK: - LibSQL-backed Search
+
+@MainActor
+final class LibSQLSearchEngine: SearchEngine {
+    private let modelContext: ModelContext
+    private let embeddingService: EmbeddingService
+    private let libSQLStore: LibSQLStore
+    private let keywordWeight: Double
+    private let semanticWeight: Double
+
+    init(
+        modelContext: ModelContext,
+        embeddingService: EmbeddingService,
+        libSQLStore: LibSQLStore,
+        keywordWeight: Double = 0.6,
+        semanticWeight: Double = 0.4
+    ) {
+        self.modelContext = modelContext
+        self.embeddingService = embeddingService
+        self.libSQLStore = libSQLStore
+        self.keywordWeight = keywordWeight
+        self.semanticWeight = semanticWeight
+    }
+
+    func search(_ query: SearchQuery) async throws -> [SearchResult] {
+        let trimmed = query.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let queryEmbedding = try await embeddingService.embedQuery(trimmed.isEmpty ? "all" : trimmed)
+
+        let rows = try libSQLStore.searchRows(for: query, queryEmbedding: queryEmbedding)
+        guard !rows.isEmpty else { return [] }
+
+        let ids = rows.map(\.documentID)
+        let descriptor = FetchDescriptor<Document>(predicate: #Predicate { ids.contains($0.id) })
+        let documents = try modelContext.fetch(descriptor)
+        let documentsByID = Dictionary(uniqueKeysWithValues: documents.map { ($0.id, $0) })
+
+        let scored: [SearchResult] = rows.compactMap { row in
+            guard let document = documentsByID[row.documentID] else {
+                return nil
+            }
+
+            let keyword = Self.keywordScore(
+                title: row.title,
+                ocrText: row.ocrText,
+                cleanedText: row.cleanedText,
+                location: row.location,
+                query: trimmed
+            )
+            let semantic = Self.semanticScore(
+                embedding: row.embedding,
+                queryEmbedding: queryEmbedding
+            )
+
+            let score = SearchScoreComponents(keyword: keyword, semantic: semantic)
+            return SearchResult(document: document, score: score)
+        }
+
+        return scored.sorted { lhs, rhs in
+            weightedScore(lhs.score) > weightedScore(rhs.score)
+        }
+    }
+
+    private func weightedScore(_ score: SearchScoreComponents) -> Double {
+        (keywordWeight * score.keyword) + (semanticWeight * score.semantic)
+    }
+
+    private static func keywordScore(
+        title: String,
+        ocrText: String,
+        cleanedText: String?,
+        location: String?,
+        query: String
+    ) -> Double {
+        guard !query.isEmpty else { return 1.0 }
+
+        let locationText = location ?? ""
+        let cleaned = cleanedText ?? ""
+        let haystack = (title + " " + ocrText + " " + cleaned + " " + locationText).lowercased()
+
+        let tokens = query.lowercased().split(whereSeparator: { $0.isWhitespace || $0.isPunctuation })
+        guard !tokens.isEmpty else { return 0 }
+
+        let matches = tokens.filter { haystack.contains($0) }.count
+        return Double(matches) / Double(tokens.count)
+    }
+
+    private static func semanticScore(
+        embedding: [Double]?,
+        queryEmbedding: [Double]
+    ) -> Double {
+        guard let embedding else {
+            return 0
+        }
+        return cosineSimilarity(embedding, queryEmbedding)
+    }
+}

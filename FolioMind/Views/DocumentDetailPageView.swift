@@ -7,6 +7,7 @@
 
 import SwiftUI
 import PhotosUI
+import MapKit
 
 struct DocumentDetailPageView: View {
     @Environment(\.modelContext) private var modelContext
@@ -35,6 +36,9 @@ struct DocumentDetailPageView: View {
     @State private var assetNotice: StatusNotice?
     @State private var showAddImageOptions: Bool = false
     @State private var showScannerForAdd: Bool = false
+    @State private var showPhotoLibraryPicker: Bool = false
+    @State private var assetReviewURLs: [URL] = []
+    @State private var showAssetOCRReview: Bool = false
 
     enum DetailTab: String, CaseIterable {
         case overview = "Overview"
@@ -82,6 +86,10 @@ struct DocumentDetailPageView: View {
                 // Tab Selector
                 tabSelector
 
+                processingStatusBanner
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+
                 if isReextracting {
                     reextractingBanner
                         .padding(.horizontal, 16)
@@ -124,9 +132,7 @@ struct DocumentDetailPageView: View {
                     }
 
                     Button {
-                        Task {
-                            await reextractDocument()
-                        }
+                        reextractDocument()
                     } label: {
                         Label("Re-run Extraction", systemImage: "arrow.triangle.2.circlepath")
                     }
@@ -184,7 +190,10 @@ struct DocumentDetailPageView: View {
         })
         .sheet(isPresented: $showScannerForAdd) {
             DocumentScannerView { urls in
-                Task { await addScannedAssets(from: urls) }
+                showScannerForAdd = false
+                Task { @MainActor in
+                    presentAssetReview(urls: urls)
+                }
             } onCancel: {
                 showScannerForAdd = false
             } onError: { error in
@@ -198,9 +207,83 @@ struct DocumentDetailPageView: View {
                 ), autoHide: 3)
             }
         }
+        .sheet(isPresented: $showAssetOCRReview) {
+            OCRReviewView(
+                urls: assetReviewURLs,
+                onCancel: {
+                    clearAssetReview()
+                },
+                onConfirm: { processed in
+                    showAssetOCRReview = false
+                    Task {
+                        await addReviewedAssets(urls: processed)
+                    }
+                }
+            )
+        }
         .onAppear {
             // Cache docType to prevent crashes when accessing after deletion
             cachedDocType = document.docType
+        }
+        .onChange(of: selectedPhotos) { _, newValue in
+            Task {
+                await addNewAssets(from: newValue)
+            }
+        }
+        .photosPicker(
+            isPresented: $showPhotoLibraryPicker,
+            selection: $selectedPhotos,
+            maxSelectionCount: 10,
+            matching: .images
+        )
+    }
+
+    // MARK: - Processing Status
+
+    @ViewBuilder
+    private var processingStatusBanner: some View {
+        switch document.processingStatus {
+        case .processing:
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.caption)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Analyzing in background")
+                        .font(.caption.weight(.semibold))
+                    Text("You can keep using the app while we finish processing this document.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            .padding(10)
+            .background(Color.blue.opacity(0.1))
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        case .failed:
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Processing failed")
+                        .font(.caption.weight(.semibold))
+                    if let message = document.lastProcessingError, !message.isEmpty {
+                        Text(message)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    } else {
+                        Text("You can try again from the menu using Re-run Extraction.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+            }
+            .padding(10)
+            .background(Color.orange.opacity(0.1))
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        default:
+            EmptyView()
         }
     }
 
@@ -241,7 +324,9 @@ struct DocumentDetailPageView: View {
 
                 // Floating Add Assets button
                 Menu {
-                    PhotosPicker(selection: $selectedPhotos, maxSelectionCount: 10, matching: .images) {
+                    Button {
+                        showPhotoLibraryPicker = true
+                    } label: {
                         Label("Photo Library", systemImage: "photo")
                     }
 
@@ -265,11 +350,6 @@ struct DocumentDetailPageView: View {
                     .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: 4)
                 }
                 .padding(16)
-                .onChange(of: selectedPhotos) { _, newValue in
-                    Task {
-                        await addNewAssets(from: newValue)
-                    }
-                }
             }
 
             // Asset thumbnail strip (shown when multiple assets or when adding assets)
@@ -334,7 +414,9 @@ struct DocumentDetailPageView: View {
 
     private var addAssetButton: some View {
         Menu {
-            PhotosPicker(selection: $selectedPhotos, maxSelectionCount: 10, matching: .images) {
+            Button {
+                showPhotoLibraryPicker = true
+            } label: {
                 Label("Photo Library", systemImage: "photo")
             }
 
@@ -378,7 +460,9 @@ struct DocumentDetailPageView: View {
 
                 // Add Images button
                 Menu {
-                    PhotosPicker(selection: $selectedPhotos, maxSelectionCount: 10, matching: .images) {
+                    Button {
+                        showPhotoLibraryPicker = true
+                    } label: {
                         Label("Photo Library", systemImage: "photo")
                     }
 
@@ -456,6 +540,11 @@ struct DocumentDetailPageView: View {
             // Quick Stats
             statsSection
                 .padding(.top, 8)
+
+            // Location Map (if available)
+            if let location = document.location, !location.isEmpty {
+                locationSection(location: location)
+            }
 
             // Key Information Cards
             keyInfoSection
@@ -680,6 +769,15 @@ struct DocumentDetailPageView: View {
                 icon: "text.alignleft",
                 color: .green
             )
+        }
+    }
+
+    // MARK: - Location Section
+
+    private func locationSection(location: String) -> some View {
+        VStack(spacing: 12) {
+            SectionHeader(title: "Capture Location", icon: "location.fill")
+            MapLocationView(locationString: location)
         }
     }
 
@@ -1005,30 +1103,22 @@ struct DocumentDetailPageView: View {
         }
     }
 
-    private func reextractDocument() async {
+    private func reextractDocument() {
         guard !isReextracting else { return }
         isReextracting = true
-        defer { isReextracting = false }
 
-        do {
-            _ = try await services.documentStore.reextract(document: document, in: modelContext)
-            cachedDocType = document.docType
-            showAssetNotice(StatusNotice(
-                title: "Extraction refreshed",
-                subtitle: "Fields and highlights updated",
-                systemImage: "checkmark.seal.fill",
-                tint: .green,
-                isProgress: false
-            ), autoHide: 2.5)
-        } catch {
-            reextractError = error.localizedDescription
-            showAssetNotice(StatusNotice(
-                title: "Re-extraction failed",
-                subtitle: error.localizedDescription,
-                systemImage: "exclamationmark.triangle.fill",
-                tint: .orange,
-                isProgress: false
-            ), autoHide: 3)
+        services.documentStore.scheduleReextract(document: document, in: modelContext)
+
+        showAssetNotice(StatusNotice(
+            title: "Re-running extraction…",
+            subtitle: "You can keep browsing while we update this document.",
+            systemImage: "arrow.triangle.2.circlepath",
+            tint: .blue,
+            isProgress: true
+        ), autoHide: 2.5)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            isReextracting = false
         }
     }
 
@@ -1101,30 +1191,95 @@ struct DocumentDetailPageView: View {
         }
     }
 
+    @MainActor
+    private func presentAssetReview(urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        assetReviewURLs = urls
+        showAssetOCRReview = true
+        showAssetNotice(StatusNotice(
+            title: "Review detected text",
+            subtitle: "Rotate or crop before adding",
+            systemImage: "text.viewfinder",
+            tint: .blue,
+            isProgress: false
+        ), autoHide: 2.5)
+    }
+
+    @MainActor
+    private func clearAssetReview() {
+        assetReviewURLs.forEach { try? FileManager.default.removeItem(at: $0) }
+        assetReviewURLs.removeAll()
+        showAssetOCRReview = false
+    }
+
+    @MainActor
     private func addNewAssets(from items: [PhotosPickerItem]) async {
         guard !items.isEmpty else { return }
         showAssetNotice(StatusNotice(
-            title: "Adding \(items.count) image(s)…",
-            subtitle: "Saving to your library",
-            systemImage: "arrow.down.doc",
+            title: "Preparing preview…",
+            subtitle: "Detecting text before adding",
+            systemImage: "text.viewfinder",
+            tint: .blue,
+            isProgress: true
+        ))
+
+        var tempURLs: [URL] = []
+        for item in items {
+            guard let data = try? await item.loadTransferable(type: Data.self) else { continue }
+            let tempURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)
+                .appendingPathExtension("jpg")
+            do {
+                try data.write(to: tempURL)
+                tempURLs.append(tempURL)
+            } catch {
+                showAssetNotice(StatusNotice(
+                    title: "Save failed",
+                    subtitle: error.localizedDescription,
+                    systemImage: "exclamationmark.triangle.fill",
+                    tint: .orange,
+                    isProgress: false
+                ), autoHide: 3)
+            }
+        }
+
+        // Clear the selection
+        selectedPhotos = []
+
+        guard !tempURLs.isEmpty else {
+            assetNotice = nil
+            return
+        }
+
+        presentAssetReview(urls: tempURLs)
+    }
+
+    @MainActor
+    private func addReviewedAssets(urls: [URL]) async {
+        guard !urls.isEmpty else {
+            clearAssetReview()
+            return
+        }
+
+        showAssetNotice(StatusNotice(
+            title: "Adding \(urls.count) image(s)…",
+            subtitle: "Applying your rotations/crops",
+            systemImage: "square.and.arrow.down",
             tint: .blue,
             isProgress: true
         ))
 
         var addedCount = 0
-        for item in items {
-            guard let data = try? await item.loadTransferable(type: Data.self) else { continue }
-
-            // Create a unique filename in the documents directory
-            let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            let filename = "\(UUID().uuidString).jpg"
-            let fileURL = documentsPath.appendingPathComponent(filename)
-
+        for url in urls {
             do {
-                // Write the image data to the file
-                try data.write(to: fileURL)
+                let data = try Data(contentsOf: url)
+                let filename = "\(UUID().uuidString).jpg"
+                let fileURL = try FileStorageManager.shared.save(
+                    data,
+                    to: .assets,
+                    filename: filename
+                )
 
-                // Create a new Asset and add it to the document
                 let nextPageNumber = (document.assets.map(\.pageNumber).max() ?? -1) + 1
                 let newAsset = Asset(
                     fileURL: fileURL.path,
@@ -1135,10 +1290,11 @@ struct DocumentDetailPageView: View {
 
                 modelContext.insert(newAsset)
                 document.assets.append(newAsset)
-
-                // Update the selected index to show the newly added asset
                 selectedAssetIndex = document.imageAssets.count - 1
                 addedCount += 1
+
+                // Clean up temp file
+                try? FileManager.default.removeItem(at: url)
             } catch {
                 showAssetNotice(StatusNotice(
                     title: "Save failed",
@@ -1150,78 +1306,19 @@ struct DocumentDetailPageView: View {
             }
         }
 
-        // Save the context
         try? modelContext.save()
-
-        // Clear the selection
-        selectedPhotos = []
+        clearAssetReview()
 
         if addedCount > 0 {
             showAssetNotice(StatusNotice(
                 title: "Images added",
-                subtitle: "Re-run extraction to refresh fields",
+                subtitle: "Refreshing fields from new pages…",
                 systemImage: "checkmark.circle.fill",
                 tint: .green,
                 isProgress: false
             ), autoHide: 2.5)
-        } else {
-            assetNotice = nil
-        }
-    }
 
-    private func addScannedAssets(from urls: [URL]) async {
-        guard !urls.isEmpty else { return }
-        showAssetNotice(StatusNotice(
-            title: "Adding \(urls.count) scanned image(s)…",
-            subtitle: "Saving to document",
-            systemImage: "doc.viewfinder",
-            tint: .blue,
-            isProgress: true
-        ))
-
-        var addedCount = 0
-        for url in urls {
-            do {
-                // Create a new Asset and add it to the document
-                let nextPageNumber = (document.assets.map(\.pageNumber).max() ?? -1) + 1
-                let newAsset = Asset(
-                    fileURL: url.path,
-                    assetType: .image,
-                    addedAt: Date(),
-                    pageNumber: nextPageNumber
-                )
-
-                modelContext.insert(newAsset)
-                document.assets.append(newAsset)
-
-                // Update the selected index to show the newly added asset
-                selectedAssetIndex = document.imageAssets.count - 1
-                addedCount += 1
-            } catch {
-                showAssetNotice(StatusNotice(
-                    title: "Save failed",
-                    subtitle: error.localizedDescription,
-                    systemImage: "exclamationmark.triangle.fill",
-                    tint: .orange,
-                    isProgress: false
-                ), autoHide: 3)
-            }
-        }
-
-        // Save the context
-        try? modelContext.save()
-
-        // Close the scanner
-        showScannerForAdd = false
-
-        if addedCount > 0 {
-            showAssetNotice(StatusNotice(
-                title: "Scanned images added",
-                subtitle: "Re-run extraction to refresh fields",
-                systemImage: "checkmark.circle.fill",
-                tint: .green,
-                isProgress: false
-            ), autoHide: 2.5)
+            reextractDocument()
         } else {
             assetNotice = nil
         }

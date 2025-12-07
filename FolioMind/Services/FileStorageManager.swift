@@ -33,6 +33,7 @@ final class FileStorageManager {
         case assets = "FolioMindAssets"
         case recordings = "FolioMindRecordings"
         case temp = "Temp"
+        case database = "FolioMindDatabase"
 
         var subdirectoryName: String { rawValue }
     }

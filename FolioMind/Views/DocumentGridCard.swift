@@ -28,6 +28,7 @@ struct DocumentGridCard: View {
     @State private var cachedOCRText: String = ""
     @State private var cachedFields: [DisplayField] = []
     @State private var cachedLocation: String?
+    @State private var cachedProcessingStatus: ProcessingStatus?
 
     private var safeDocType: DocumentType {
         cachedDocType ?? .generic
@@ -180,6 +181,24 @@ struct DocumentGridCard: View {
             }
             .foregroundStyle(.secondary)
 
+            if cachedProcessingStatus == .processing {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(.system(size: 10))
+                    Text("Processing in background…")
+                        .font(.caption2)
+                }
+                .foregroundStyle(.blue)
+            } else if cachedProcessingStatus == .failed {
+                HStack(spacing: 4) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 10))
+                    Text("Processing failed")
+                        .font(.caption2)
+                }
+                .foregroundStyle(.orange)
+            }
+
             if let location = cachedLocation {
                 HStack(spacing: 4) {
                     Image(systemName: "mappin.and.ellipse")
@@ -219,6 +238,7 @@ struct DocumentGridCard: View {
         cachedFields = document.fields.map {
             DisplayField(key: $0.key, value: $0.value, confidence: $0.confidence)
         }
+        cachedProcessingStatus = document.processingStatus
     }
 
     private func loadImage(from url: URL) -> UIImage? {
