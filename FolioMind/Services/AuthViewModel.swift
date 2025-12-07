@@ -13,9 +13,11 @@ final class AuthViewModel: NSObject, ObservableObject {
     @Published var isAuthenticated = false
     @Published var isAuthenticating = false
     @Published var authError: AuthError?
+    @Published var showReloginPrompt = false
 
     private let authAPI = AuthAPI()
     private let tokenManager: TokenManager
+    private var authCheckTimer: Timer?
 
     override init() {
         self.tokenManager = TokenManager(authAPI: authAPI)
@@ -30,6 +32,34 @@ final class AuthViewModel: NSObject, ObservableObject {
 
             // Re-check authentication status after credential check
             isAuthenticated = await tokenManager.isAuthenticated
+
+            // Start periodic auth check to detect when session is cleared
+            startAuthMonitoring()
+        }
+    }
+
+    deinit {
+        authCheckTimer?.invalidate()
+    }
+
+    private func startAuthMonitoring() {
+        // Check auth status every 10 seconds to detect session changes
+        authCheckTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let wasAuthenticated = self.isAuthenticated
+                let nowAuthenticated = await self.tokenManager.isAuthenticated
+
+                // If user was authenticated but now isn't, show re-login prompt
+                if wasAuthenticated && !nowAuthenticated {
+                    print("⚠️ Session lost - prompting user to re-login")
+                    self.isAuthenticated = false
+                    self.showReloginPrompt = true
+                    self.authError = .tokenExpired
+                } else {
+                    self.isAuthenticated = nowAuthenticated
+                }
+            }
         }
     }
 
@@ -38,6 +68,7 @@ final class AuthViewModel: NSObject, ObservableObject {
     func signInWithApple() {
         authError = nil
         isAuthenticating = true
+        showReloginPrompt = false
 
         let provider = ASAuthorizationAppleIDProvider()
         let request = provider.createRequest()

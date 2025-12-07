@@ -133,6 +133,16 @@
         }
       }
     },
+    "%lld value%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld value%2$@"
+          }
+        }
+      }
+    },
     "%lld." : {
       "localizations" : {
         "en" : {
@@ -176,6 +186,9 @@
           }
         }
       }
+    },
+    "• %@" : {
+
     },
     "1.0.0" : {
       "localizations" : {
@@ -4521,6 +4534,9 @@
         }
       }
     },
+    "Session Expired" : {
+
+    },
     "Settings" : {
       "localizations" : {
         "en" : {
@@ -4653,6 +4669,9 @@
           }
         }
       }
+    },
+    "Sign In Again" : {
+
     },
     "Sign in with Apple is required when using backend processing." : {
       "extractionState" : "stale",
@@ -5731,6 +5750,9 @@
           }
         }
       }
+    },
+    "Your session has expired. Please sign in again to continue using authenticated features." : {
+
     },
     "Your settings have been saved." : {
       "extractionState" : "stale",

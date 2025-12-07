@@ -174,11 +174,9 @@ struct ContentView: View {
     @State private var showDeleteConfirmation: Bool = false
     @State private var showSettings: Bool = false
     @State private var statusNotice: StatusNotice?
+    @State private var showSignInSheet: Bool = false
     @State private var selectedSpotlightID: String?
     @State private var noteToShow: AudioNote?
-    @State private var reviewURLs: [URL] = []
-    @State private var reviewTitle: String?
-    @State private var showOCRReview: Bool = false
 
     private var scannerAvailable: Bool {
         DocumentScannerView.isAvailable
@@ -372,7 +370,11 @@ struct ContentView: View {
                 DocumentScannerView { urls in
                     showScanner = false
                     Task { @MainActor in
-                        presentReview(for: urls, preferredTitle: urls.first?.deletingPathExtension().lastPathComponent)
+                        try? await ingestURLs(
+                            urls,
+                            preferredTitle: urls.first?.deletingPathExtension().lastPathComponent,
+                            toggleScanning: true
+                        )
                     }
                 } onCancel: {
                     showScanner = false
@@ -380,21 +382,6 @@ struct ContentView: View {
                     showScanner = false
                     errorMessage = error.localizedDescription
                 }
-            }
-            .sheet(isPresented: $showOCRReview) {
-                OCRReviewView(
-                    urls: reviewURLs,
-                    onCancel: {
-                        cancelReview()
-                    },
-                    onConfirm: { processed in
-                        showOCRReview = false
-                        Task {
-                            try? await ingestURLs(processed, preferredTitle: reviewTitle)
-                            clearReviewState()
-                        }
-                    }
-                )
             }
             .sheet(isPresented: $showSettings) {
                 SettingsView()
@@ -421,6 +408,10 @@ struct ContentView: View {
                 Text(errorMessage)
                 }
             })
+        .sessionExpiredAlert(
+            authViewModel: services.authViewModel,
+            showSignIn: $showSignInSheet
+        )
         }
     }
 
@@ -903,9 +894,9 @@ struct ContentView: View {
         guard let item else { return }
         isImporting = true
         showNotice(StatusNotice(
-            title: "Preparing preview…",
-            subtitle: "Detecting text before processing",
-            systemImage: "text.viewfinder",
+            title: "Preparing import…",
+            subtitle: "Auto-cropping and aligning your image",
+            systemImage: "sparkles.rectangle.stack",
             tint: .blue,
             isProgress: true
         ))
@@ -921,14 +912,7 @@ struct ContentView: View {
                 .appendingPathExtension("jpg")
             try data.write(to: tempURL)
             let title = item.itemIdentifier ?? tempURL.deletingPathExtension().lastPathComponent
-            showNotice(StatusNotice(
-                title: "Review detected text",
-                subtitle: "Rotate or crop before processing \"\(title)\"",
-                systemImage: "text.viewfinder",
-                tint: .blue,
-                isProgress: false
-            ), autoHide: 2.5)
-            presentReview(for: [tempURL], preferredTitle: title)
+            try await ingestURLs([tempURL], preferredTitle: title, toggleScanning: false)
         } catch {
             errorMessage = error.localizedDescription
             showNotice(StatusNotice(
@@ -942,40 +926,55 @@ struct ContentView: View {
     }
 
     @MainActor
-    private func presentReview(for urls: [URL], preferredTitle: String?) {
-        guard !urls.isEmpty else { return }
-        clearReviewState()
-        reviewURLs = urls
-        reviewTitle = preferredTitle
-        showOCRReview = true
-    }
+    private func preprocessImageURLs(_ urls: [URL]) async -> [URL] {
+        guard !urls.isEmpty else { return [] }
+        var processed: [URL] = []
 
-    @MainActor
-    private func cancelReview() {
-        clearReviewState()
-        showOCRReview = false
-    }
-
-    @MainActor
-    private func clearReviewState() {
-        reviewURLs.forEach { try? FileManager.default.removeItem(at: $0) }
-        reviewURLs.removeAll()
-        reviewTitle = nil
-    }
-
-    @MainActor
-    private func ingestURLs(_ urls: [URL], preferredTitle: String? = nil) async throws {
-        guard !urls.isEmpty else { return }
-        isScanning = true
-        defer {
-            isScanning = false
-            showScanner = false
+        for url in urls {
+            if let processedURL = await ImagePreprocessor.processFileInPlace(url) {
+                processed.append(processedURL)
+            } else {
+                processed.append(url)
+            }
         }
-        let baseTitle = preferredTitle ?? urls.first!.deletingPathExtension().lastPathComponent
+
+        return processed
+    }
+
+    private func cleanupTemporaryImages(_ urls: [URL]) {
+        let assetsDirectory = try? FileStorageManager.shared.url(for: .assets)
+        for url in urls {
+            if let assetsDirectory, url.deletingLastPathComponent() == assetsDirectory {
+                continue
+            }
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+
+    @MainActor
+    private func ingestURLs(
+        _ urls: [URL],
+        preferredTitle: String? = nil,
+        toggleScanning: Bool
+    ) async throws {
+        guard !urls.isEmpty else { return }
+        let processedURLs = await preprocessImageURLs(urls)
+        if toggleScanning {
+            isScanning = true
+        }
+        defer {
+            if toggleScanning {
+                isScanning = false
+                showScanner = false
+            }
+            cleanupTemporaryImages(processedURLs)
+        }
+
+        let baseTitle = preferredTitle ?? processedURLs.first!.deletingPathExtension().lastPathComponent
         do {
             showNotice(StatusNotice(
-                title: "Saving \(urls.count) image(s)…",
-                subtitle: "Persisting to your device",
+                title: "Saving \(processedURLs.count) image(s)…",
+                subtitle: "Auto-cropped and aligned",
                 systemImage: "sparkles.rectangle.stack",
                 tint: .blue,
                 isProgress: true
@@ -985,7 +984,7 @@ struct ContentView: View {
                 title: baseTitle
             )
             let document = try await services.documentStore.ingestDocuments(
-                from: urls,
+                from: processedURLs,
                 options: options,
                 in: modelContext
             )
@@ -2249,4 +2248,35 @@ private struct OCRCard: View {
     ContentView()
         .environmentObject(services)
         .modelContainer(services.modelContainer)
+}
+
+// MARK: - Session Expired Alert Modifier
+
+private struct SessionExpiredAlertModifier: ViewModifier {
+    @ObservedObject var authViewModel: AuthViewModel
+    @Binding var showSignIn: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .alert("Session Expired", isPresented: $authViewModel.showReloginPrompt) {
+                Button("Sign In Again") {
+                    showSignIn = true
+                    authViewModel.showReloginPrompt = false
+                }
+                Button("Cancel", role: .cancel) {
+                    authViewModel.showReloginPrompt = false
+                }
+            } message: {
+                Text("Your session has expired. Please sign in again to continue using authenticated features.")
+            }
+            .sheet(isPresented: $showSignIn) {
+                SignInView(authViewModel: authViewModel)
+            }
+    }
+}
+
+extension View {
+    func sessionExpiredAlert(authViewModel: AuthViewModel, showSignIn: Binding<Bool>) -> some View {
+        self.modifier(SessionExpiredAlertModifier(authViewModel: authViewModel, showSignIn: showSignIn))
+    }
 }

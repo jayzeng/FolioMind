@@ -132,8 +132,10 @@ actor TokenManager {
                 print("✅ Refreshed access token")
                 return newSession
             } catch {
-                // Refresh failed - clear the session
-                try? await clearSession()
+                // Refresh failed - clear the session so user knows they need to re-login
+                print("❌ Token refresh failed, clearing session: \(error.localizedDescription)")
+                currentSession = nil
+                try? keychain.deleteAuthSession()
                 throw AuthError.refreshFailed
             }
         }

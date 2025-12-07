@@ -168,14 +168,7 @@ struct BackendDocumentAnalyzer: DocumentAnalyzer {
         print("📋 Expanding array field '\(backendField.key)' with \(array.count) items")
 
         return array.enumerated().map { index, item in
-            let itemValue: String
-            if let stringValue = item as? String {
-                itemValue = stringValue
-            } else if let numberValue = item as? NSNumber {
-                itemValue = numberValue.stringValue
-            } else {
-                itemValue = "\(item)"
-            }
+            let itemValue = formattedArrayItem(item)
 
             return Field(
                 key: "\(backendField.key)_\(index + 1)",
@@ -184,6 +177,63 @@ struct BackendDocumentAnalyzer: DocumentAnalyzer {
                 source: source
             )
         }
+    }
+
+    private func formattedArrayItem(_ item: Any) -> String {
+        if let dictionary = item as? [String: Any] {
+            let parts = dictionary
+                .sorted { $0.key < $1.key }
+                .compactMap { key, value -> String? in
+                    let formatted = formatArrayValue(value)
+                    guard !formatted.isEmpty else { return nil }
+                    return "\(key)=\(formatted)"
+                }
+
+            let joined = parts.joined(separator: " | ")
+            return joined.isEmpty ? "\(item)" : joined
+        }
+
+        if let array = item as? [Any] {
+            let values = array.compactMap { formatArrayValue($0) }
+            let joined = values.joined(separator: ", ")
+            return joined.isEmpty ? "\(item)" : joined
+        }
+
+        return formatArrayValue(item)
+    }
+
+    private func formatArrayValue(_ value: Any) -> String {
+        if value is NSNull { return "" }
+
+        if let string = value as? String {
+            return string
+        }
+
+        if let number = value as? NSNumber {
+            if CFGetTypeID(number) == CFBooleanGetTypeID() {
+                return number.boolValue ? "true" : "false"
+            }
+            return number.stringValue
+        }
+
+        if let dictionary = value as? [String: Any] {
+            let parts = dictionary
+                .sorted { $0.key < $1.key }
+                .compactMap { key, nested -> String? in
+                    let formatted = formatArrayValue(nested)
+                    guard !formatted.isEmpty else { return nil }
+                    return "\(key)=\(formatted)"
+                }
+            return parts.joined(separator: " | ")
+        }
+
+        if let array = value as? [Any] {
+            return array
+                .compactMap { formatArrayValue($0) }
+                .joined(separator: ", ")
+        }
+
+        return "\(value)"
     }
 
     private func convertFieldSource(_ sourceString: String?) -> FieldSource {

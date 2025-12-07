@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Foundation
 import PhotosUI
 import MapKit
 
@@ -37,8 +38,6 @@ struct DocumentDetailPageView: View {
     @State private var showAddImageOptions: Bool = false
     @State private var showScannerForAdd: Bool = false
     @State private var showPhotoLibraryPicker: Bool = false
-    @State private var assetReviewURLs: [URL] = []
-    @State private var showAssetOCRReview: Bool = false
 
     enum DetailTab: String, CaseIterable {
         case overview = "Overview"
@@ -192,7 +191,7 @@ struct DocumentDetailPageView: View {
             DocumentScannerView { urls in
                 showScannerForAdd = false
                 Task { @MainActor in
-                    presentAssetReview(urls: urls)
+                    await processAndAddAssets(from: urls)
                 }
             } onCancel: {
                 showScannerForAdd = false
@@ -206,20 +205,6 @@ struct DocumentDetailPageView: View {
                     isProgress: false
                 ), autoHide: 3)
             }
-        }
-        .sheet(isPresented: $showAssetOCRReview) {
-            OCRReviewView(
-                urls: assetReviewURLs,
-                onCancel: {
-                    clearAssetReview()
-                },
-                onConfirm: { processed in
-                    showAssetOCRReview = false
-                    Task {
-                        await addReviewedAssets(urls: processed)
-                    }
-                }
-            )
         }
         .onAppear {
             // Cache docType to prevent crashes when accessing after deletion
@@ -541,9 +526,9 @@ struct DocumentDetailPageView: View {
             statsSection
                 .padding(.top, 8)
 
-            // Location Map (if available)
-            if let location = document.location, !location.isEmpty {
-                locationSection(location: location)
+            let locations = mapLocations
+            if !locations.isEmpty {
+                locationSection(locations: locations)
             }
 
             // Key Information Cards
@@ -774,10 +759,10 @@ struct DocumentDetailPageView: View {
 
     // MARK: - Location Section
 
-    private func locationSection(location: String) -> some View {
+    private func locationSection(locations: [String]) -> some View {
         VStack(spacing: 12) {
-            SectionHeader(title: "Capture Location", icon: "location.fill")
-            MapLocationView(locationString: location)
+            SectionHeader(title: locations.count > 1 ? "Locations" : "Capture Location", icon: "location.fill")
+            MapLocationView(locationStrings: locations)
         }
     }
 
@@ -1069,6 +1054,33 @@ struct DocumentDetailPageView: View {
         formatter.unitsStyle = .abbreviated
         return formatter.localizedString(for: date, relativeTo: Date())
     }
+
+    private var mapLocations: [String] {
+        var results: [String] = []
+        var seen: Set<String> = []
+
+        func appendIfNew(_ raw: String?) {
+            guard let raw else { return }
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return }
+
+            let normalized = trimmed.lowercased()
+            guard !seen.contains(normalized) else { return }
+
+            seen.insert(normalized)
+            results.append(trimmed)
+        }
+
+        appendIfNew(document.location)
+
+        for field in deduplicateFields(document.fields) {
+            if isAddressField(key: field.key, value: field.value) {
+                appendIfNew(field.value)
+            }
+        }
+
+        return results
+    }
     // MARK: - Helper Functions
 
     private func fieldValue(for keys: [String]) -> String? {
@@ -1191,110 +1203,68 @@ struct DocumentDetailPageView: View {
         }
     }
 
-    @MainActor
-    private func presentAssetReview(urls: [URL]) {
-        guard !urls.isEmpty else { return }
-        assetReviewURLs = urls
-        showAssetOCRReview = true
-        showAssetNotice(StatusNotice(
-            title: "Review detected text",
-            subtitle: "Rotate or crop before adding",
-            systemImage: "text.viewfinder",
-            tint: .blue,
-            isProgress: false
-        ), autoHide: 2.5)
-    }
-
-    @MainActor
-    private func clearAssetReview() {
-        assetReviewURLs.forEach { try? FileManager.default.removeItem(at: $0) }
-        assetReviewURLs.removeAll()
-        showAssetOCRReview = false
+    private func cleanupStagedAssets(_ urls: [URL]) {
+        let assetsDirectory = try? FileStorageManager.shared.url(for: .assets)
+        for url in urls {
+            if let assetsDirectory, url.deletingLastPathComponent() == assetsDirectory {
+                continue
+            }
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 
     @MainActor
     private func addNewAssets(from items: [PhotosPickerItem]) async {
         guard !items.isEmpty else { return }
         showAssetNotice(StatusNotice(
-            title: "Preparing preview…",
-            subtitle: "Detecting text before adding",
-            systemImage: "text.viewfinder",
-            tint: .blue,
-            isProgress: true
-        ))
-
-        var tempURLs: [URL] = []
-        for item in items {
-            guard let data = try? await item.loadTransferable(type: Data.self) else { continue }
-            let tempURL = FileManager.default.temporaryDirectory
-                .appendingPathComponent(UUID().uuidString)
-                .appendingPathExtension("jpg")
-            do {
-                try data.write(to: tempURL)
-                tempURLs.append(tempURL)
-            } catch {
-                showAssetNotice(StatusNotice(
-                    title: "Save failed",
-                    subtitle: error.localizedDescription,
-                    systemImage: "exclamationmark.triangle.fill",
-                    tint: .orange,
-                    isProgress: false
-                ), autoHide: 3)
-            }
-        }
-
-        // Clear the selection
-        selectedPhotos = []
-
-        guard !tempURLs.isEmpty else {
-            assetNotice = nil
-            return
-        }
-
-        presentAssetReview(urls: tempURLs)
-    }
-
-    @MainActor
-    private func addReviewedAssets(urls: [URL]) async {
-        guard !urls.isEmpty else {
-            clearAssetReview()
-            return
-        }
-
-        showAssetNotice(StatusNotice(
-            title: "Adding \(urls.count) image(s)…",
-            subtitle: "Applying your rotations/crops",
-            systemImage: "square.and.arrow.down",
+            title: "Processing images…",
+            subtitle: "Auto-cropping before adding",
+            systemImage: "sparkles.rectangle.stack",
             tint: .blue,
             isProgress: true
         ))
 
         var addedCount = 0
+        for item in items {
+            guard let data = try? await item.loadTransferable(type: Data.self) else { continue }
+            if await addAsset(from: data, preprocessed: false) {
+                addedCount += 1
+            }
+        }
+
+        selectedPhotos = []
+        try? modelContext.save()
+        finishAssetAdd(count: addedCount)
+    }
+
+    @MainActor
+    private func processAndAddAssets(from urls: [URL]) async {
+        guard !urls.isEmpty else { return }
+        showAssetNotice(StatusNotice(
+            title: "Processing scans…",
+            subtitle: "Auto-cropping and aligning pages",
+            systemImage: "sparkles.rectangle.stack",
+            tint: .blue,
+            isProgress: true
+        ))
+
+        var addedCount = 0
+        var stagedForCleanup: [URL] = []
+        let assetsDirectory = try? FileStorageManager.shared.url(for: .assets)
+
         for url in urls {
+            _ = await ImagePreprocessor.processFileInPlace(url)
             do {
                 let data = try Data(contentsOf: url)
-                let filename = "\(UUID().uuidString).jpg"
-                let fileURL = try FileStorageManager.shared.save(
-                    data,
-                    to: .assets,
-                    filename: filename
-                )
+                let isPersisted = assetsDirectory.map { url.deletingLastPathComponent() == $0 } ?? false
+                let destinationURL = isPersisted ? url : nil
 
-                let nextPageNumber = (document.assets.map(\.pageNumber).max() ?? -1) + 1
-                let newAsset = Asset(
-                    fileURL: fileURL.path,
-                    assetType: .image,
-                    addedAt: Date(),
-                    pageNumber: nextPageNumber
-                )
-
-                modelContext.insert(newAsset)
-                document.assets.append(newAsset)
-                selectedAssetIndex = document.imageAssets.count - 1
-                addedCount += 1
-
-                // Clean up temp file
-                try? FileManager.default.removeItem(at: url)
+                if await addAsset(from: data, preprocessed: true, existingURL: destinationURL) {
+                    addedCount += 1
+                }
+                if !isPersisted {
+                    stagedForCleanup.append(url)
+                }
             } catch {
                 showAssetNotice(StatusNotice(
                     title: "Save failed",
@@ -1306,10 +1276,55 @@ struct DocumentDetailPageView: View {
             }
         }
 
+        cleanupStagedAssets(stagedForCleanup)
         try? modelContext.save()
-        clearAssetReview()
+        finishAssetAdd(count: addedCount)
+    }
 
-        if addedCount > 0 {
+    @MainActor
+    private func addAsset(from data: Data, preprocessed: Bool, existingURL: URL? = nil) async -> Bool {
+        do {
+            let fileURL: URL
+            if let existingURL {
+                fileURL = existingURL
+            } else {
+                let finalData = preprocessed ? data : (await ImagePreprocessor.processedJPEGData(from: data) ?? data)
+                let filename = "\(UUID().uuidString).jpg"
+                fileURL = try FileStorageManager.shared.save(
+                    finalData,
+                    to: .assets,
+                    filename: filename
+                )
+            }
+
+            let nextPageNumber = (document.assets.map(\.pageNumber).max() ?? -1) + 1
+            let newAsset = Asset(
+                fileURL: fileURL.path,
+                assetType: .image,
+                addedAt: Date(),
+                pageNumber: nextPageNumber
+            )
+
+            modelContext.insert(newAsset)
+            document.assets.append(newAsset)
+            selectedAssetIndex = document.imageAssets.count - 1
+
+            return true
+        } catch {
+            showAssetNotice(StatusNotice(
+                title: "Save failed",
+                subtitle: error.localizedDescription,
+                systemImage: "exclamationmark.triangle.fill",
+                tint: .orange,
+                isProgress: false
+            ), autoHide: 3)
+            return false
+        }
+    }
+
+    @MainActor
+    private func finishAssetAdd(count: Int) {
+        if count > 0 {
             showAssetNotice(StatusNotice(
                 title: "Images added",
                 subtitle: "Refreshing fields from new pages…",
@@ -1336,27 +1351,135 @@ struct DocumentDetailPageView: View {
     }
 
     private func deduplicateFields(_ fields: [Field]) -> [Field] {
-        var seen = Set<String>()
-        var unique: [Field] = []
+        var seenFields: [String: Field] = [:]
 
         for field in fields {
-            // Normalize the value for comparison
-            let normalizedValue: String
-            if field.key.lowercased().contains("phone") {
-                // For phone numbers, normalize by removing all non-digit characters except +
-                normalizedValue = field.value.filter { $0.isNumber || $0 == "+" }
-            } else {
-                normalizedValue = field.value.lowercased().trimmingCharacters(in: .whitespaces)
-            }
+            // Normalize the key by removing underscores, hyphens, and spaces
+            let normalizedKey = field.key
+                .lowercased()
+                .replacingOccurrences(of: "_", with: "")
+                .replacingOccurrences(of: "-", with: "")
+                .replacingOccurrences(of: " ", with: "")
 
-            let key = "\(field.key.lowercased()):\(normalizedValue)"
-            if !seen.contains(key) {
-                seen.insert(key)
-                unique.append(field)
+            let normalizedValue = normalizedFieldValue(for: field, normalizedKey: normalizedKey)
+
+            let compositeKey = "\(normalizedKey):\(normalizedValue)"
+
+            // If we haven't seen this field before, add it
+            if let existingField = seenFields[compositeKey] {
+                // We have a duplicate - choose which one to keep based on priority:
+                // 1. Higher confidence
+                // 2. Backend sources (gemini, openai) over local sources (vision)
+                // 3. If equal, keep the first one
+
+                let shouldReplace = field.confidence > existingField.confidence ||
+                    (field.confidence == existingField.confidence &&
+                     isBackendSource(field.source) && !isBackendSource(existingField.source))
+
+                if shouldReplace {
+                    seenFields[compositeKey] = field
+                }
+            } else {
+                seenFields[compositeKey] = field
             }
         }
 
-        return unique
+        return Array(seenFields.values).sorted { field1, field2 in
+            // Sort by key for consistent ordering
+            field1.key.lowercased() < field2.key.lowercased()
+        }
+    }
+
+    private func isAddressField(key: String, value: String) -> Bool {
+        let loweredKey = key.lowercased()
+        let addressKeywords = [
+            "address",
+            "addr",
+            "location",
+            "merchant_address",
+            "merchant_location",
+            "store_address",
+            "billing_address",
+            "shipping_address"
+        ]
+
+        guard addressKeywords.contains(where: { loweredKey.contains($0) }) else { return false }
+        return looksLikeAddress(value)
+    }
+
+    private func looksLikeAddress(_ value: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+
+        let lower = trimmed.lowercased()
+        let streetIndicators = [" street", " st", " ave", " avenue", " blvd", " road", " rd", " lane", " ln", " drive", " dr", " hwy", " highway"]
+        let hasStreetIndicator = streetIndicators.contains(where: { lower.contains($0) })
+
+        let hasComma = trimmed.contains(",")
+        let hasNumber = trimmed.rangeOfCharacter(from: .decimalDigits) != nil
+        let hasLetters = trimmed.rangeOfCharacter(from: .letters) != nil
+        let hasLineBreak = trimmed.contains("\n")
+        let wordCount = trimmed.split(whereSeparator: \.isWhitespace).count
+
+        if hasStreetIndicator && hasLetters {
+            return true
+        }
+
+        if hasComma && hasLetters {
+            return true
+        }
+
+        if hasNumber && hasLetters && (hasComma || hasLineBreak || trimmed.count > 6) {
+            return true
+        }
+
+        if wordCount >= 2 && hasLetters && trimmed.count > 6 {
+            return true
+        }
+
+        return false
+    }
+
+    private func normalizedFieldValue(for field: Field, normalizedKey: String) -> String {
+        if normalizedKey.contains("phone") || normalizedKey.contains("tel") || normalizedKey.contains("mobile") {
+            return field.value.filter { $0.isNumber || $0 == "+" }
+        }
+
+        if isIdentifierKey(rawKey: field.key) {
+            return field.value
+                .lowercased()
+                .components(separatedBy: CharacterSet.alphanumerics.inverted)
+                .joined()
+        }
+
+        return field.value
+            .lowercased()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func isIdentifierKey(rawKey: String) -> Bool {
+        let loweredKey = rawKey.lowercased()
+        let idKeywords = ["transaction", "reference", "receipt", "invoice", "order", "tracking"]
+
+        if idKeywords.contains(where: { loweredKey.contains($0) }) || loweredKey == "id" {
+            return true
+        }
+
+        let tokenized = loweredKey
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+            .split(whereSeparator: \.isWhitespace)
+
+        return tokenized.contains(where: { $0 == "id" })
+    }
+
+    private func isBackendSource(_ source: FieldSource) -> Bool {
+        switch source {
+        case .gemini, .openai, .fused:
+            return true
+        case .vision:
+            return false
+        }
     }
 
     private func deleteField(_ field: Field) {
@@ -1529,23 +1652,130 @@ struct StatCard: View {
     }
 }
 
+private enum FieldDisplayContent {
+    case single(String)
+    case multiple([String])
+
+    var displayLines: [String] {
+        switch self {
+        case .single(let value):
+            return [value]
+        case .multiple(let values):
+            return values
+        }
+    }
+
+    var copyValue: String {
+        displayLines.joined(separator: "\n")
+    }
+}
+
+private func parseFieldDisplayContent(_ rawValue: String) -> FieldDisplayContent {
+    if let parsedLines = parseJSONLines(from: rawValue) {
+        return .multiple(parsedLines)
+    }
+
+    return .single(rawValue)
+}
+
+private func parseJSONLines(from rawValue: String) -> [String]? {
+    let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard let data = trimmed.data(using: .utf8),
+          trimmed.first == "[" || trimmed.first == "{" else {
+        return nil
+    }
+
+    if let array = try? JSONSerialization.jsonObject(with: data) as? [Any] {
+        let formatted = array.compactMap { formatJSONItem($0) }
+        return formatted.isEmpty ? nil : formatted
+    }
+
+    if let dictionary = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+        if let formatted = formatJSONItem(dictionary) {
+            return [formatted]
+        }
+    }
+
+    return nil
+}
+
+private func formatJSONItem(_ item: Any) -> String? {
+    if let dictionary = item as? [String: Any] {
+        let components = dictionary
+            .sorted { $0.key < $1.key }
+            .compactMap { key, value -> String? in
+                let formattedValue = formatJSONValue(value)
+                guard !formattedValue.isEmpty else { return nil }
+                return "\(key)=\(formattedValue)"
+            }
+
+        let joined = components.joined(separator: " | ")
+        return joined.isEmpty ? nil : joined
+    }
+
+    if let array = item as? [Any] {
+        let values = array.compactMap { formatJSONValue($0) }
+        let joined = values.joined(separator: ", ")
+        return joined.isEmpty ? nil : joined
+    }
+
+    let scalar = formatJSONValue(item)
+    return scalar.isEmpty ? nil : scalar
+}
+
+private func formatJSONValue(_ value: Any) -> String {
+    if value is NSNull { return "" }
+
+    if let string = value as? String {
+        return string
+    }
+
+    if let number = value as? NSNumber {
+        if CFGetTypeID(number) == CFBooleanGetTypeID() {
+            return number.boolValue ? "true" : "false"
+        }
+        return number.stringValue
+    }
+
+    if let dictionary = value as? [String: Any] {
+        let components = dictionary
+            .sorted { $0.key < $1.key }
+            .compactMap { key, nestedValue -> String? in
+                let formatted = formatJSONValue(nestedValue)
+                guard !formatted.isEmpty else { return nil }
+                return "\(key)=\(formatted)"
+            }
+            .joined(separator: " | ")
+        return components
+    }
+
+    if let array = value as? [Any] {
+        return array
+            .compactMap { formatJSONValue($0) }
+            .joined(separator: ", ")
+    }
+
+    return "\(value)"
+}
+
 struct FieldRow: View {
     let field: Field
     let onCopy: (String) -> Void
 
+    private var displayContent: FieldDisplayContent {
+        parseFieldDisplayContent(field.value)
+    }
+
     var body: some View {
         Button {
-            onCopy(field.value)
+            onCopy(displayContent.copyValue)
         } label: {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(field.key.capitalized)
+                    Text(field.key.replacingOccurrences(of: "_", with: " ").capitalized)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Text(field.value)
-                        .font(.subheadline)
-                        .foregroundStyle(.primary)
-                        .lineLimit(2)
+                    valueView(for: displayContent)
                 }
 
                 Spacer()
@@ -1562,6 +1792,30 @@ struct FieldRow: View {
             .clipShape(RoundedRectangle(cornerRadius: 10))
         }
         .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func valueView(for content: FieldDisplayContent) -> some View {
+        switch content {
+        case .single(let value):
+            Text(value)
+                .font(.subheadline)
+                .foregroundStyle(.primary)
+                .lineLimit(2)
+        case .multiple(let values):
+            VStack(alignment: .leading, spacing: 4) {
+                Text("\(values.count) value\(values.count == 1 ? "" : "s")")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                ForEach(Array(values.enumerated()), id: \.offset) { _, line in
+                    Text("• \(line)")
+                        .font(.subheadline)
+                        .foregroundStyle(.primary)
+                        .lineLimit(nil)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
     }
 
     @ViewBuilder
@@ -1590,9 +1844,18 @@ struct ActionableFieldChip: View {
     @State private var showEditSheet: Bool = false
     @State private var showDeleteConfirmation: Bool = false
 
+    private var displayContent: FieldDisplayContent {
+        parseFieldDisplayContent(field.value)
+    }
+
     private var detectedActions: [FieldAction] {
+        let copyValue = displayContent.copyValue
+
+        guard case .single(let value) = displayContent else {
+            return [.copy(copyValue)]
+        }
+
         var actions: [FieldAction] = []
-        let value = field.value
 
         // Phone number detection
         if isPhoneNumber(value) {
@@ -1614,7 +1877,7 @@ struct ActionableFieldChip: View {
         }
 
         // Always allow copy
-        actions.append(.copy(value))
+        actions.append(.copy(copyValue))
 
         return actions
     }
@@ -1692,18 +1955,7 @@ struct ActionableFieldChip: View {
                     Text(field.key.capitalized.replacingOccurrences(of: "_", with: " "))
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    HStack(spacing: 4) {
-                        Text(field.value)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.primary)
-                            .lineLimit(2)
-
-                        if field.isModified {
-                            Image(systemName: "pencil.circle.fill")
-                                .font(.caption2)
-                                .foregroundStyle(.orange)
-                        }
-                    }
+                    valueView(for: displayContent)
                 }
 
                 Spacer()
@@ -1755,6 +2007,50 @@ struct ActionableFieldChip: View {
                     onDelete?()
                 }
             )
+        }
+    }
+
+    @ViewBuilder
+    private func valueView(for content: FieldDisplayContent) -> some View {
+        switch content {
+        case .single(let value):
+            HStack(alignment: .top, spacing: 4) {
+                Text(value)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
+
+                if field.isModified {
+                    Image(systemName: "pencil.circle.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                }
+            }
+
+        case .multiple(let values):
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    if field.isModified {
+                        Image(systemName: "pencil.circle.fill")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
+
+                    Text("\(values.count) value\(values.count == 1 ? "" : "s")")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(Array(values.enumerated()), id: \.offset) { _, line in
+                        Text("• \(line)")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                            .lineLimit(nil)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
         }
     }
 
