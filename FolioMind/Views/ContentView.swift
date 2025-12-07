@@ -158,6 +158,8 @@ struct ContentView: View {
     @EnvironmentObject private var services: AppServices
     @Query(sort: \Document.createdAt, order: .reverse) private var documents: [Document]
     @Query(sort: \AudioNote.createdAt, order: .reverse) private var audioNotes: [AudioNote]
+    @AppStorage("onboarding_primary_goal") private var onboardingPrimaryGoal: String = ""
+    @AppStorage("has_seen_first_doc_hints") private var hasSeenFirstDocHints: Bool = false
     @State private var searchText: String = ""
     @State private var searchResults: [SearchResult] = []
     @State private var isSearching: Bool = false
@@ -260,6 +262,10 @@ struct ContentView: View {
                         InlineStatusBanner(notice: notice)
                             .padding(.bottom, 12)
                             .transition(.move(edge: .top).combined(with: .opacity))
+                    } else if !documents.isEmpty && !hasSeenFirstDocHints {
+                        firstDocHintsView
+                            .padding(.bottom, 12)
+                            .transition(.move(edge: .top).combined(with: .opacity))
                     } else if isSearching || isImporting || isScanning || isRecordingAudio {
                         statusBanner
                     }
@@ -277,6 +283,9 @@ struct ContentView: View {
                             emptySearchView
                         } else {
                             documentGrid(currentGridData.documents, scores: currentGridData.scores)
+                            if currentGridData.documents.contains(where: { $0.isSample }) {
+                                sampleDeleteRow
+                            }
                         }
                     } else {
                         if documents.isEmpty {
@@ -286,6 +295,9 @@ struct ContentView: View {
                                 filteredEmptyView
                             } else {
                                 documentGrid(currentGridData.documents, scores: nil)
+                                if currentGridData.documents.contains(where: { $0.isSample }) {
+                                    sampleDeleteRow
+                                }
                             }
                         }
                     }
@@ -499,6 +511,86 @@ struct ContentView: View {
         .padding(.bottom, 12)
     }
 
+    private func createSampleFolio() {
+        let context = modelContext
+        Task {
+            let descriptor = FetchDescriptor<Document>()
+            let existingCount = (try? context.fetchCount(descriptor)) ?? 0
+            guard existingCount == 0 else {
+                return
+            }
+
+            for index in 1...4 {
+                do {
+                    _ = try await services.documentStore.createStubDocument(
+                        in: context,
+                        titleSuffix: index
+                    )
+                } catch {
+                    errorMessage = error.localizedDescription
+                    break
+                }
+            }
+        }
+    }
+
+    private func deleteSampleFolio() {
+        let context = modelContext
+        Task { @MainActor in
+            do {
+                let removed = try await services.documentStore.deleteSampleDocuments(in: context)
+                onboardingPrimaryGoal = ""
+                hasSeenFirstDocHints = false
+
+                if removed > 0 {
+                    showNotice(StatusNotice(
+                        title: "Sample folio removed",
+                        subtitle: "Deleted \(removed) sample document\(removed == 1 ? "" : "s")",
+                        systemImage: "trash.fill",
+                        tint: .red,
+                        isProgress: false
+                    ), autoHide: 2.5)
+                } else {
+                    showNotice(StatusNotice(
+                        title: "No sample documents",
+                        subtitle: "There were no sample documents to remove.",
+                        systemImage: "info.circle",
+                        tint: .gray,
+                        isProgress: false
+                    ), autoHide: 2)
+                }
+            } catch {
+                errorMessage = error.localizedDescription
+                showNotice(StatusNotice(
+                    title: "Couldn’t remove sample folio",
+                    subtitle: error.localizedDescription,
+                    systemImage: "exclamationmark.triangle.fill",
+                    tint: .orange,
+                    isProgress: false
+                ), autoHide: 3)
+            }
+        }
+    }
+
+    private var sampleDeleteRow: some View {
+        HStack(spacing: 8) {
+            Label("Sample documents", systemImage: "wand.and.stars")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Button(role: .destructive) {
+                deleteSampleFolio()
+            } label: {
+                Text("Delete all")
+                    .font(.footnote.weight(.semibold))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.red)
+        }
+        .padding(.horizontal, 4)
+        .padding(.bottom, 8)
+    }
+
     private var emptySearchView: some View {
         VStack(spacing: 16) {
             Image(systemName: "magnifyingglass")
@@ -539,21 +631,164 @@ struct ContentView: View {
     }
 
     private var emptyStateView: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "tray")
-                .font(.system(size: 64))
-                .foregroundStyle(.secondary)
-            VStack(spacing: 8) {
-                Text("No Documents")
-                    .font(.title2.weight(.semibold))
-                Text("Import or scan documents to get started")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
+        VStack(spacing: 24) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color(hue: 0.60, saturation: 0.18, brightness: 0.96),
+                                Color(hue: 0.63, saturation: 0.24, brightness: 0.90)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .shadow(color: Color.black.opacity(0.10), radius: 20, y: 10)
+
+                VStack(spacing: 14) {
+                    Image(systemName: "tray")
+                        .font(.system(size: 42))
+                        .foregroundStyle(.white.opacity(0.92))
+
+                    VStack(spacing: 6) {
+                        Text(emptyStateTitle)
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(.white)
+                        Text(emptyStateSubtitle)
+                            .font(.footnote)
+                            .foregroundStyle(Color.white.opacity(0.86))
+                            .multilineTextAlignment(.center)
+                    }
+
+                    HStack(spacing: 10) {
+                        Button {
+                            if scannerAvailable {
+                                showScanner = true
+                            } else {
+                                errorMessage = "Document scanning is unavailable on this device."
+                            }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "doc.viewfinder")
+                                Text("Scan a document")
+                            }
+                            .font(.subheadline.weight(.semibold))
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .background(
+                                Capsule(style: .continuous)
+                                    .fill(Color.white.opacity(0.16))
+                            )
+                            .foregroundStyle(.white)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isScanning || !scannerAvailable)
+
+                        PhotosPicker(selection: $photoPickerItem, matching: .images) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "photo")
+                                Text("Import from Photos")
+                            }
+                            .font(.subheadline.weight(.semibold))
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .background(
+                                Capsule(style: .continuous)
+                                    .fill(Color.white.opacity(0.10))
+                            )
+                            .foregroundStyle(.white)
+                        }
+                        .disabled(isImporting)
+                    }
+                }
+                .padding(20)
+            }
+            .frame(maxWidth: .infinity)
+
+            SurfaceCard {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("Want to just look around?", systemImage: "sparkles")
+                        .font(.subheadline.weight(.semibold))
+                    Text("Add a tiny demo folio with a few fake documents "
+                        + "so you can explore search, details, and reminders "
+                        + "before committing your own.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    Button {
+                        createSampleFolio()
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "plus.square.on.square")
+                            Text("Create a sample folio")
+                        }
+                        .font(.footnote.weight(.semibold))
+                    }
+                }
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 80)
+        .padding(.vertical, 32)
+    }
+
+    private var emptyStateTitle: String {
+        switch onboardingPrimaryGoal {
+        case "receipts":
+            return "Let’s catch your next receipt"
+        case "ids":
+            return "Keep your IDs in one place"
+        case "health":
+            return "Keep health paperwork at hand"
+        case "family":
+            return "Give family docs a safe home"
+        default:
+            return "Your folio is waiting"
+        }
+    }
+
+    private var emptyStateSubtitle: String {
+        switch onboardingPrimaryGoal {
+        case "receipts":
+            return "Scan the next bill, rent slip, or reimbursement so you never have to dig through email or boxes again."
+        case "ids":
+            return "Scan a passport, license, or insurance card so you have a trusted backup whenever you need the details."
+        case "health":
+            return "Capture a lab result, referral, or bill so the important numbers are searchable, not buried in paper."
+        case "family":
+            return "Start with a school form, pet record, or shared bill so everyone’s paperwork has a quiet home."
+        default:
+            return "Scan something from your wallet or import a photo to see FolioMind analyze and organize it for you."
+        }
+    }
+
+    private var firstDocHintsView: some View {
+        SurfaceCard {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Label("Nice — your first folio!", systemImage: "sparkles")
+                            .font(.subheadline.weight(.semibold))
+                        Spacer()
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Label("Try searching what’s on the page", systemImage: "magnifyingglass")
+                            .font(.caption)
+                        Label("Tap into a card to see fields, people, and reminders", systemImage: "doc.text.magnifyingglass")
+                            .font(.caption)
+                        Label("Add more pages later from the detail screen", systemImage: "plus.rectangle.on.rectangle")
+                            .font(.caption)
+                    }
+                    .foregroundStyle(.secondary)
+                }
+                Button {
+                    hasSeenFirstDocHints = true
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
     }
 
     @ViewBuilder

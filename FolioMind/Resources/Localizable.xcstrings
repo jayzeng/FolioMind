@@ -1,6 +1,9 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "“March rent receipt”" : {
+
+    },
     "%lld" : {
       "localizations" : {
         "en" : {
@@ -245,6 +248,9 @@
           }
         }
       }
+    },
+    "Add more pages later from the detail screen" : {
+
     },
     "Add Reminder" : {
       "localizations" : {
@@ -676,6 +682,9 @@
         }
       }
     },
+    "Back" : {
+
+    },
     "Back to Suggestions" : {
       "localizations" : {
         "en" : {
@@ -722,6 +731,9 @@
           }
         }
       }
+    },
+    "Bring in a document from your camera or photo library." : {
+
     },
     "Cancel" : {
       "localizations" : {
@@ -947,6 +959,9 @@
         }
       }
     },
+    "Continue" : {
+
+    },
     "Copy All" : {
       "localizations" : {
         "en" : {
@@ -968,6 +983,9 @@
           }
         }
       }
+    },
+    "Create a sample folio" : {
+
     },
     "Create Custom Reminder" : {
       "localizations" : {
@@ -1100,6 +1118,9 @@
           }
         }
       }
+    },
+    "Delete all" : {
+
     },
     "Delete Document" : {
       "localizations" : {
@@ -1642,6 +1663,9 @@
         }
       }
     },
+    "Explore with a sample folio" : {
+
+    },
     "Extracted Data" : {
       "localizations" : {
         "en" : {
@@ -1804,6 +1828,9 @@
         }
       }
     },
+    "Find anything later" : {
+
+    },
     "FolioMind" : {
       "localizations" : {
         "en" : {
@@ -1847,6 +1874,9 @@
           }
         }
       }
+    },
+    "Found in 0.2 seconds" : {
+
     },
     "Front" : {
       "localizations" : {
@@ -1914,7 +1944,11 @@
         }
       }
     },
+    "Import from Photos" : {
+
+    },
     "Import or scan documents to get started" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -2164,7 +2198,14 @@
         }
       }
     },
+    "Most processing stays on your device by default, with optional backend support you control in Settings." : {
+
+    },
+    "Nice — your first folio!" : {
+
+    },
     "No Documents" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -2474,6 +2515,9 @@
           }
         }
       }
+    },
+    "OCR, document type, key fields and links are suggested automatically." : {
+
     },
     "OK" : {
       "localizations" : {
@@ -3249,6 +3293,9 @@
     "Rotate Failed" : {
 
     },
+    "Sample documents" : {
+
+    },
     "Save" : {
       "localizations" : {
         "en" : {
@@ -3293,7 +3340,13 @@
         }
       }
     },
+    "Scan a document" : {
+
+    },
     "Scan Document" : {
+
+    },
+    "Scan or import" : {
 
     },
     "Scanning document…" : {
@@ -3317,6 +3370,9 @@
           }
         }
       }
+    },
+    "Search by person, amount, place or phrase across all your docs." : {
+
     },
     "Search documents" : {
       "localizations" : {
@@ -3503,6 +3559,12 @@
         }
       }
     },
+    "Skip" : {
+
+    },
+    "Smart folio" : {
+
+    },
     "Smart Highlights" : {
       "localizations" : {
         "en" : {
@@ -3524,6 +3586,9 @@
           }
         }
       }
+    },
+    "Start organizing" : {
+
     },
     "Stop" : {
       "localizations" : {
@@ -3590,6 +3655,9 @@
           }
         }
       }
+    },
+    "Tap into a card to see fields, people, and reminders" : {
+
     },
     "This document doesn't have any structured data" : {
       "localizations" : {
@@ -3747,6 +3815,12 @@
           }
         }
       }
+    },
+    "Try searching what’s on the page" : {
+
+    },
+    "Turn scattered paperwork into a living memory bank." : {
+
     },
     "Type" : {
       "localizations" : {
@@ -3934,6 +4008,21 @@
         }
       }
     },
+    "Want to just look around?" : {
+
+    },
+    "We analyze each page for text, people, dates and places – then make everything searchable in a few seconds." : {
+
+    },
+    "We do the busywork" : {
+
+    },
+    "We gently enrich, never overwrite your docs." : {
+
+    },
+    "We’ll add a few fake documents so you can tap around before adding your own." : {
+
+    },
     "We'll summarize this note once transcription finishes." : {
       "extractionState" : "stale",
       "localizations" : {
@@ -3958,6 +4047,18 @@
       }
     },
     "We’ll summarize this note once transcription finishes." : {
+
+    },
+    "We’ll tune suggestions and empty states around this, and you can still store anything." : {
+
+    },
+    "Welcome to FolioMind" : {
+
+    },
+    "What do you want to tame first?" : {
+
+    },
+    "Your docs, with context" : {
 
     },
     "Your settings have been saved." : {

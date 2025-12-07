@@ -8,6 +8,7 @@
 import Foundation
 import AVFoundation
 import SwiftData
+import UIKit
 
 struct AudioRecordingResult {
     let url: URL
@@ -151,7 +152,6 @@ final class AppServices: ObservableObject {
     init() {
         // Initialize authentication first
         self.authViewModel = AuthViewModel()
-
 
         let schema = Schema([
             Document.self,
@@ -310,6 +310,17 @@ final class DocumentStore {
         var capturedAt: Date?
     }
 
+    private struct StubMetadata {
+        let title: String
+        let docType: DocumentType
+        let subtitle: String
+        let detail: String
+        let fields: [Field]
+        let ocrText: String
+        let capturedAt: Date
+        let location: String
+    }
+
     private let analyzer: DocumentAnalyzer
     private let embeddingService: EmbeddingService
     private let llmService: LLMService?
@@ -328,20 +339,39 @@ final class DocumentStore {
         self.metadataExtractor = metadataExtractor
     }
 
+    @MainActor
     func createStubDocument(in context: ModelContext, titleSuffix: Int) async throws -> Document {
         let now = Date()
-        let stubField = Field(key: "note", value: "Sample stub", confidence: 0.5, source: .fused)
+        let stubInfo = stubMetadata(for: titleSuffix, now: now)
+
+        let imageURL = try makeStubImage(
+            title: stubInfo.title,
+            subtitle: stubInfo.subtitle,
+            detail: stubInfo.detail,
+            docType: stubInfo.docType
+        )
+
+        let asset = Asset(
+            fileURL: imageURL.path,
+            assetType: .image,
+            addedAt: now,
+            pageNumber: 0
+        )
+        context.insert(asset)
+        stubInfo.fields.forEach { context.insert($0) }
+
         let document = Document(
-            title: "Sample Document \(titleSuffix)",
-            docType: .generic,
-            ocrText: "Stub document created at \(now)",
-            fields: [stubField],
+            title: stubInfo.title,
+            docType: stubInfo.docType,
+            ocrText: stubInfo.ocrText,
+            fields: stubInfo.fields,
             createdAt: now,
-            capturedAt: now,
-            location: "Local",
-            assets: [],
+            capturedAt: stubInfo.capturedAt,
+            location: stubInfo.location,
+            assets: [asset],
             personLinks: [],
-            faceClusterIDs: []
+            faceClusterIDs: [],
+            isSample: true
         )
         context.insert(document)
         let embedding = try await embeddingService.embedDocument(document)
@@ -356,6 +386,263 @@ final class DocumentStore {
             context.delete(documents[index])
         }
         try? context.save()
+    }
+
+    @MainActor
+    func deleteSampleDocuments(in context: ModelContext) async throws -> Int {
+        let descriptor = FetchDescriptor<Document>(predicate: #Predicate { $0.isSample == true })
+        let samples = try context.fetch(descriptor)
+        guard !samples.isEmpty else { return 0 }
+
+        for document in samples {
+            for asset in document.imageAssets {
+                let url = URL(fileURLWithPath: asset.fileURL)
+                try? storageManager.deleteFile(at: url)
+            }
+            context.delete(document)
+        }
+
+        try context.save()
+        return samples.count
+    }
+
+    private func stubMetadata(
+        for index: Int,
+        now: Date
+    ) -> StubMetadata {
+        let calendar = Calendar.current
+        let captured = calendar.date(byAdding: .day, value: -index, to: now) ?? now
+
+        switch index % 4 {
+        case 1:
+            let title = "March Rent Receipt"
+            let amount = "$2,150.00"
+            let vendor = "Brightview Apartments"
+            let fields = [
+                Field(key: "total", value: amount, confidence: 0.98, source: .fused),
+                Field(key: "merchant", value: vendor, confidence: 0.96, source: .fused)
+            ]
+            let ocrText = """
+            \(vendor)
+            Rent payment receipt
+            Amount: \(amount)
+            """
+            return (
+                title: title,
+                docType: .receipt,
+                subtitle: vendor,
+                detail: amount,
+                fields: fields,
+                ocrText: ocrText,
+                capturedAt: captured,
+                location: "San Francisco, CA"
+            )
+        case 2:
+            let title = "Health Insurance Card"
+            let member = "Alex Martinez"
+            let plan = "Silver PPO 2500"
+            let fields = [
+                Field(key: "member_name", value: member, confidence: 0.99, source: .fused),
+                Field(key: "plan", value: plan, confidence: 0.95, source: .fused)
+            ]
+            let ocrText = """
+            \(member)
+            Member ID: FM-2748392
+            Plan: \(plan)
+            """
+            return (
+                title: title,
+                docType: .insuranceCard,
+                subtitle: member,
+                detail: plan,
+                fields: fields,
+                ocrText: ocrText,
+                capturedAt: captured,
+                location: "Sample Folio"
+            )
+        case 3:
+            let title = "Pediatric Visit Summary"
+            let child = "Milo Chen"
+            let clinic = "Lakeside Pediatrics"
+            let fields = [
+                Field(key: "patient_name", value: child, confidence: 0.97, source: .fused),
+                Field(key: "provider", value: clinic, confidence: 0.94, source: .fused)
+            ]
+            let ocrText = """
+            \(clinic)
+            Patient: \(child)
+            Follow-up in 6 months.
+            """
+            return (
+                title: title,
+                docType: .letter,
+                subtitle: clinic,
+                detail: child,
+                fields: fields,
+                ocrText: ocrText,
+                capturedAt: captured,
+                location: "Sample Folio"
+            )
+        default:
+            let title = "Passport Scan"
+            let holder = "Jordan Lee"
+            let fields = [
+                Field(key: "holder", value: holder, confidence: 0.98, source: .fused),
+                Field(key: "doc_number", value: "XK3928471", confidence: 0.93, source: .fused)
+            ]
+            let ocrText = """
+            Passport
+            \(holder)
+            Document No: XK3928471
+            """
+            return (
+                title: title,
+                docType: .idCard,
+                subtitle: holder,
+                detail: "Document No. XK3928471",
+                fields: fields,
+                ocrText: ocrText,
+                capturedAt: captured,
+                location: "Sample Folio"
+            )
+        }
+    }
+
+    @MainActor
+    private func makeStubImage(
+        title: String,
+        subtitle: String,
+        detail: String,
+        docType: DocumentType
+    ) throws -> URL {
+        let size = CGSize(width: 900, height: 1200)
+        let renderer = UIGraphicsImageRenderer(size: size)
+
+        let image = renderer.image { context in
+            let bounds = CGRect(origin: .zero, size: size)
+
+            UIColor.systemBackground.setFill()
+            context.fill(bounds)
+
+            let cardRect = bounds.insetBy(dx: 80, dy: 140)
+            let cardPath = UIBezierPath(roundedRect: cardRect, cornerRadius: 32)
+            UIColor.secondarySystemBackground.setFill()
+            cardPath.fill()
+
+            let accentColor: UIColor
+            switch docType {
+            case .receipt:
+                accentColor = UIColor.systemOrange
+            case .insuranceCard:
+                accentColor = UIColor.systemTeal
+            case .idCard:
+                accentColor = UIColor.systemIndigo
+            case .letter:
+                accentColor = UIColor.systemBlue
+            case .billStatement:
+                accentColor = UIColor.systemRed
+            case .promotional:
+                accentColor = UIColor.systemPink
+            case .creditCard:
+                accentColor = UIColor.systemGreen
+            case .generic:
+                accentColor = UIColor.systemGray
+            }
+
+            let stripeRect = CGRect(
+                x: cardRect.minX,
+                y: cardRect.minY,
+                width: cardRect.width,
+                height: 96
+            )
+            accentColor.setFill()
+            context.fill(stripeRect)
+
+            let titleAttributes: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: 40, weight: .semibold),
+                .foregroundColor: UIColor.white
+            ]
+            let subtitleAttributes: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: 22, weight: .medium),
+                .foregroundColor: UIColor.white.withAlphaComponent(0.9)
+            ]
+
+            let textInset: CGFloat = 20
+            let titleRect = stripeRect.insetBy(dx: textInset, dy: 18)
+            (title as NSString).draw(
+                in: CGRect(
+                    x: titleRect.minX,
+                    y: titleRect.minY,
+                    width: titleRect.width,
+                    height: 44
+                ),
+                withAttributes: titleAttributes
+            )
+
+            (subtitle as NSString).draw(
+                in: CGRect(
+                    x: titleRect.minX,
+                    y: titleRect.maxY - 4,
+                    width: titleRect.width,
+                    height: 28
+                ),
+                withAttributes: subtitleAttributes
+            )
+
+            let bodyTop = stripeRect.maxY + 28
+            let bodyRect = CGRect(
+                x: cardRect.minX + 24,
+                y: bodyTop,
+                width: cardRect.width - 48,
+                height: cardRect.height - (bodyTop - cardRect.minY) - 40
+            )
+
+            let labelAttributes: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: 16, weight: .semibold),
+                .foregroundColor: UIColor.secondaryLabel
+            ]
+            let valueAttributes: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: 24, weight: .semibold),
+                .foregroundColor: UIColor.label
+            ]
+
+            let label = "Key detail"
+            (label as NSString).draw(
+                at: CGPoint(x: bodyRect.minX, y: bodyRect.minY),
+                withAttributes: labelAttributes
+            )
+
+            (detail as NSString).draw(
+                in: CGRect(
+                    x: bodyRect.minX,
+                    y: bodyRect.minY + 18,
+                    width: bodyRect.width,
+                    height: 60
+                ),
+                withAttributes: valueAttributes
+            )
+
+            let footerAttributes: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: 13, weight: .regular),
+                .foregroundColor: UIColor.secondaryLabel
+            ]
+            let footer = "Sample generated by FolioMind • Not real data"
+            let footerSize = (footer as NSString).size(withAttributes: footerAttributes)
+            (footer as NSString).draw(
+                at: CGPoint(
+                    x: cardRect.midX - footerSize.width / 2,
+                    y: cardRect.maxY - 28
+                ),
+                withAttributes: footerAttributes
+            )
+        }
+
+        guard let data = image.jpegData(compressionQuality: 0.9) else {
+            throw NSError(domain: "FolioMind", code: -2, userInfo: [NSLocalizedDescriptionKey: "Unable to encode sample image."])
+        }
+
+        let filename = storageManager.uniqueFilename(withExtension: "jpg")
+        return try storageManager.save(data, to: .assets, filename: filename)
     }
 
     func ingestDocuments(

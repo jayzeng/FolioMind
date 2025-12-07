@@ -311,6 +311,7 @@ final class Document {
     var faceClusterIDs: [UUID]
     var embedding: Embedding?
     var reminders: [DocumentReminder]
+    var isSample: Bool
 
     init(
         id: UUID = UUID(),
@@ -326,7 +327,8 @@ final class Document {
         personLinks: [DocumentPersonLink] = [],
         faceClusterIDs: [UUID] = [],
         embedding: Embedding? = nil,
-        reminders: [DocumentReminder] = []
+        reminders: [DocumentReminder] = [],
+        isSample: Bool = false
     ) {
         self.id = id
         self.title = title
@@ -342,6 +344,7 @@ final class Document {
         self.faceClusterIDs = faceClusterIDs
         self.embedding = embedding
         self.reminders = reminders
+        self.isSample = isSample
     }
 
     // Computed property for backward compatibility - returns first asset URL
