@@ -49,6 +49,7 @@ enum DocumentRelationship: String, Codable, CaseIterable {
 enum EmbeddingSource: String, Codable, CaseIterable {
     case gemini
     case openai
+    case appleEmbed  // Apple NLEmbedding or Foundation Models
     case mock
 }
 
@@ -81,6 +82,12 @@ final class AudioNote {
     var duration: TimeInterval
     var transcript: String?
     var summary: String?
+    var transcriptionStatus: ProcessingStatus?
+    var lastTranscriptionError: String?
+    var isFavorite: Bool
+    var tags: [String]
+    var folderName: String?
+    var bookmarks: [AudioBookmark]
 
     init(
         id: UUID = UUID(),
@@ -89,7 +96,13 @@ final class AudioNote {
         createdAt: Date = Date(),
         duration: TimeInterval = 0,
         transcript: String? = nil,
-        summary: String? = nil
+        summary: String? = nil,
+        transcriptionStatus: ProcessingStatus? = .processing,
+        lastTranscriptionError: String? = nil,
+        isFavorite: Bool = false,
+        tags: [String] = [],
+        folderName: String? = nil,
+        bookmarks: [AudioBookmark] = []
     ) {
         self.id = id
         self.title = title
@@ -98,6 +111,30 @@ final class AudioNote {
         self.duration = duration
         self.transcript = transcript
         self.summary = summary
+        self.transcriptionStatus = transcriptionStatus
+        self.lastTranscriptionError = lastTranscriptionError
+        self.isFavorite = isFavorite
+        self.tags = tags
+        self.folderName = folderName
+        self.bookmarks = bookmarks
+    }
+
+    var effectiveTranscriptionStatus: ProcessingStatus {
+        transcriptionStatus ?? (transcript != nil ? .completed : .processing)
+    }
+}
+
+struct AudioBookmark: Codable, Identifiable, Equatable {
+    let id: UUID
+    let timestamp: TimeInterval
+    let note: String
+    let createdAt: Date
+
+    init(id: UUID = UUID(), timestamp: TimeInterval, note: String, createdAt: Date = Date()) {
+        self.id = id
+        self.timestamp = timestamp
+        self.note = note
+        self.createdAt = createdAt
     }
 }
 

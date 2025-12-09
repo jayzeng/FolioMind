@@ -104,17 +104,22 @@ struct AnalyzeResponse: Codable {
 
 struct UploadResponseWithMetadata: Codable {
     let ocrText: String?
-    let transcription: String?
-    let documentType: String
-    let confidence: Double
-    let signals: ClassificationSignals
-    let fields: [FieldModel]
+    let extractedText: String?
+    let documentType: String?
+    let confidence: Double?
+    let signals: ClassificationSignals?
+    let fields: [FieldModel]?
 
     enum CodingKeys: String, CodingKey {
         case ocrText = "ocr_text"
-        case transcription
+        case extractedText = "extracted_text"
         case documentType = "document_type"
         case confidence, signals, fields
+    }
+
+    // Computed property to get transcription from either field
+    var transcription: String? {
+        extractedText ?? ocrText
     }
 }
 
@@ -468,8 +473,11 @@ final class BackendAPIService {
     }
 
     private func performRequestOnce<R: Decodable>(_ request: URLRequest) async -> Result<R, APIError> {
+        var responseData: Data?
+
         do {
             let (data, response) = try await session.data(for: request)
+            responseData = data
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 return .failure(.invalidResponse)
@@ -477,7 +485,15 @@ final class BackendAPIService {
 
             guard (200...299).contains(httpResponse.statusCode) else {
                 let message = String(data: data, encoding: .utf8)
+                print("❌ HTTP \(httpResponse.statusCode): \(message ?? "no response body")")
                 return .failure(.httpError(statusCode: httpResponse.statusCode, message: message))
+            }
+
+            // Log response for debugging
+            if let url = request.url?.path, url.contains("audio") {
+                if let jsonString = String(data: data, encoding: .utf8) {
+                    print("📥 Audio upload response (\(data.count) bytes): \(jsonString.prefix(500))")
+                }
             }
 
             let decoder = JSONDecoder()
@@ -485,6 +501,12 @@ final class BackendAPIService {
             return .success(decoded)
         } catch let error as APIError {
             return .failure(error)
+        } catch let decodingError as DecodingError {
+            print("❌ JSON decoding error: \(decodingError)")
+            if let data = responseData, let jsonString = String(data: data, encoding: .utf8) {
+                print("📄 Raw response that failed to decode: \(jsonString)")
+            }
+            return .failure(.decodingError(decodingError))
         } catch {
             return .failure(.networkError(error))
         }

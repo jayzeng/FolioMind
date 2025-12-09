@@ -86,8 +86,8 @@ struct BackendDocumentAnalyzer: DocumentAnalyzer {
 
         return AnalysisData(
             ocrText: response.ocrText ?? "",
-            fields: convertBackendFields(response.fields),
-            docType: DocumentType.fromBackendString(response.documentType)
+            fields: convertBackendFields(response.fields ?? []),
+            docType: DocumentType.fromBackendString(response.documentType ?? "generic")
         )
     }
 

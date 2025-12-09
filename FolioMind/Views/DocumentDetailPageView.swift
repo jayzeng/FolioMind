@@ -16,6 +16,7 @@ struct DocumentDetailPageView: View {
     @EnvironmentObject private var services: AppServices
     @Bindable var document: Document
     var reminderManager: ReminderManager?
+    var onDelete: ((UUID) -> Void)?
 
     @State private var selectedTab: DetailTab = .overview
     @State private var showFullScreenImage: Bool = false
@@ -1073,10 +1074,9 @@ struct DocumentDetailPageView: View {
 
         appendIfNew(document.location)
 
-        for field in deduplicateFields(document.fields) {
-            if isAddressField(key: field.key, value: field.value) {
-                appendIfNew(field.value)
-            }
+        for field in deduplicateFields(document.fields)
+        where isAddressField(key: field.key, value: field.value) {
+            appendIfNew(field.value)
         }
 
         return results
@@ -1156,9 +1156,20 @@ struct DocumentDetailPageView: View {
 
     private func deleteDocument() {
         isDeleting = true
-        modelContext.delete(document)
-        try? modelContext.save()
-        dismiss()
+        do {
+            try services.documentStore.deleteDocument(document, in: modelContext)
+            onDelete?(document.id)
+            dismiss()
+        } catch {
+            isDeleting = false
+            showAssetNotice(StatusNotice(
+                title: "Delete failed",
+                subtitle: error.localizedDescription,
+                systemImage: "exclamationmark.triangle.fill",
+                tint: .orange,
+                isProgress: false
+            ), autoHide: 3)
+        }
     }
 
     private func deleteCurrentAsset() {
@@ -1412,7 +1423,21 @@ struct DocumentDetailPageView: View {
         guard !trimmed.isEmpty else { return false }
 
         let lower = trimmed.lowercased()
-        let streetIndicators = [" street", " st", " ave", " avenue", " blvd", " road", " rd", " lane", " ln", " drive", " dr", " hwy", " highway"]
+        let streetIndicators = [
+            " street",
+            " st",
+            " ave",
+            " avenue",
+            " blvd",
+            " road",
+            " rd",
+            " lane",
+            " ln",
+            " drive",
+            " dr",
+            " hwy",
+            " highway"
+        ]
         let hasStreetIndicator = streetIndicators.contains(where: { lower.contains($0) })
 
         let hasComma = trimmed.contains(",")

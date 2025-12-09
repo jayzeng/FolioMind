@@ -177,6 +177,7 @@ struct ContentView: View {
     @State private var showSignInSheet: Bool = false
     @State private var selectedSpotlightID: String?
     @State private var noteToShow: AudioNote?
+    @State private var searchDebounceTask: Task<Void, Never>?
 
     private var scannerAvailable: Bool {
         DocumentScannerView.isAvailable
@@ -339,7 +340,15 @@ struct ContentView: View {
             }
             .searchable(text: $searchText, prompt: "Search documents")
             .onChange(of: searchText) { _, newValue in
-                Task { await performSearch(text: newValue) }
+                // Cancel previous search task
+                searchDebounceTask?.cancel()
+
+                // Debounce search by 300ms
+                searchDebounceTask = Task {
+                    try? await Task.sleep(nanoseconds: 300_000_000) // 300ms
+                    guard !Task.isCancelled else { return }
+                    await performSearch(text: newValue)
+                }
             }
             .onChange(of: photoPickerItem) { _, newItem in
                 Task { await importSelectedPhoto(newItem) }
@@ -432,28 +441,28 @@ struct ContentView: View {
                         toggleAudioRecording()
                     } label: {
                         Label(
-                            isRecordingAudio ? "Stop" : "Record",
-                            systemImage: isRecordingAudio ? "stop.circle.fill" : "mic.fill"
+                            isRecordingAudio ? (services.audioRecorder.isPaused ? "Resume" : "Recording") : "Record",
+                            systemImage: isRecordingAudio ? (services.audioRecorder.isPaused ? "play.circle.fill" : "waveform") : "mic.fill"
                         )
                         .font(.caption.weight(.semibold))
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(isRecordingAudio ? .red : .blue)
+                    .tint(isRecordingAudio ? (services.audioRecorder.isPaused ? .orange : .red) : .blue)
                     .controlSize(.small)
                 }
 
                 if isRecordingAudio {
-                    HStack(spacing: 6) {
-                        Image(systemName: "waveform.path")
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                        Text("Recording… tap Stop when finished")
-                            .font(.caption)
-                            .foregroundStyle(.primary)
-                    }
+                    RecordingControlsView(
+                        audioRecorder: services.audioRecorder,
+                        onStop: {
+                            Task { @MainActor in
+                                await finishAudioRecording()
+                            }
+                        }
+                    )
                 }
 
-                if audioNotes.isEmpty {
+                if audioNotes.isEmpty && !isRecordingAudio {
                     HStack(spacing: 8) {
                         Image(systemName: "waveform.circle")
                             .font(.system(size: 24))
@@ -467,11 +476,12 @@ struct ContentView: View {
                         }
                     }
                     .padding(.top, 2)
-                } else {
+                } else if !isRecordingAudio {
                     VStack(spacing: 8) {
                         ForEach(audioNotes) { note in
                             AudioNoteRow(
                                 note: note,
+                                audioPlayer: services.audioPlayer,
                                 onError: { message in
                                     errorMessage = message
                                 },
@@ -861,7 +871,13 @@ struct ContentView: View {
         ], spacing: 12) {
             ForEach(Array(documents.enumerated()), id: \.element.id) { index, document in
                 NavigationLink {
-                    DocumentDetailPageView(document: document, reminderManager: services.reminderManager)
+                    DocumentDetailPageView(
+                        document: document,
+                        reminderManager: services.reminderManager,
+                        onDelete: { deletedID in
+                            removeSearchResult(for: deletedID)
+                        }
+                    )
                 } label: {
                     DocumentGridCard(
                         document: document,
@@ -1032,8 +1048,12 @@ struct ContentView: View {
         // Delay deletion slightly to let SwiftUI finish any in-flight rendering
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
-            modelContext.delete(doc)
-            try? modelContext.save()
+            do {
+                try services.documentStore.deleteDocument(doc, in: modelContext)
+                removeSearchResult(for: doc.id)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
             documentToDelete = nil
         }
     }
@@ -1070,20 +1090,26 @@ struct ContentView: View {
                 title: recordingTitle(from: result.startedAt),
                 fileURL: result.url.path,
                 createdAt: result.startedAt,
-                duration: result.duration
+                duration: result.duration,
+                transcriptionStatus: .processing
             )
             modelContext.insert(note)
             try modelContext.save()
+
             withAnimation(.easeOut(duration: 0.2)) {
                 isRecordingAudio = false
             }
+
             showNotice(StatusNotice(
                 title: "Audio saved",
-                subtitle: "Recording stored to your library",
+                subtitle: "Transcribing in background…",
                 systemImage: "waveform.circle.fill",
                 tint: .green,
                 isProgress: false
             ), autoHide: 2.5)
+
+            // Schedule background transcription
+            services.audioTranscriptionService.scheduleTranscription(for: note, in: modelContext)
         } catch {
             isRecordingAudio = false
             errorMessage = error.localizedDescription
@@ -1126,12 +1152,30 @@ struct ContentView: View {
         isSearching = true
         do {
             let results = try await services.searchEngine.search(SearchQuery(text: trimmed))
-            searchResults = results
+            guard !results.isEmpty else {
+                searchResults = []
+                isSearching = false
+                return
+            }
+
+            let ids = results.map { $0.document.id }
+            let descriptor = FetchDescriptor<Document>(predicate: #Predicate { ids.contains($0.id) })
+            let localDocuments = try modelContext.fetch(descriptor)
+            let docsByID = Dictionary(uniqueKeysWithValues: localDocuments.map { ($0.id, $0) })
+
+            searchResults = results.compactMap { result in
+                guard let doc = docsByID[result.document.id] else { return nil }
+                return SearchResult(document: doc, score: result.score)
+            }
             isSearching = false
         } catch {
             isSearching = false
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func removeSearchResult(for id: UUID) {
+        searchResults.removeAll { $0.document.id == id }
     }
 
     private func personNames(for document: Document) -> [String] {
@@ -1213,15 +1257,10 @@ struct ContentView: View {
 
 private struct AudioNoteRow: View {
     let note: AudioNote
+    @ObservedObject var audioPlayer: AudioPlayerService
     let onError: (String) -> Void
     let onDelete: () -> Void
     let onTap: () -> Void
-
-    @State private var isPlaying = false
-    @State private var player: AVAudioPlayer?
-    @State private var playbackProgress: Double = 0
-    @State private var playbackTimer: Timer?
-    private let playbackDelegate = PlaybackDelegate()
 
     private var durationText: String {
         let formatter = DateComponentsFormatter()
@@ -1237,40 +1276,85 @@ private struct AudioNoteRow: View {
         return formatter.localizedString(for: note.createdAt, relativeTo: Date())
     }
 
+    private var isPlayingThisNote: Bool {
+        audioPlayer.currentNoteID == note.id
+    }
+
+    private var playbackProgress: Double {
+        guard isPlayingThisNote else { return 0 }
+        return audioPlayer.progress
+    }
+
     var body: some View {
         HStack(spacing: 12) {
-            Button {
-                togglePlayback()
-            } label: {
-                ZStack {
-                    Circle()
-                        .trim(from: 0, to: CGFloat(playbackProgress))
-                        .stroke(isPlaying ? Color.green : Color.blue, lineWidth: 3)
-                        .frame(width: 46, height: 46)
-                        .rotationEffect(.degrees(-90))
-                    Circle()
-                        .fill(isPlaying ? Color.green.opacity(0.16) : Color.blue.opacity(0.14))
-                        .frame(width: 42, height: 42)
-                    Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(isPlaying ? Color.green : Color.blue)
-                }
-            }
-            .buttonStyle(.plain)
+            // Play button with progress
+            EnhancedPlaybackControlsView(
+                audioPlayer: audioPlayer,
+                note: note,
+                compact: true
+            )
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(note.title)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(note.title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+
+                    if note.isFavorite {
+                        Image(systemName: "star.fill")
+                            .font(.caption2)
+                            .foregroundStyle(.yellow)
+                    }
+                }
 
                 HStack(spacing: 6) {
-                    Image(systemName: "clock")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text(timestampText)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    if note.effectiveTranscriptionStatus == .processing {
+                        Image(systemName: "waveform")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                        Text("Transcribing…")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    } else if note.effectiveTranscriptionStatus == .failed {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                        Text("Transcription failed")
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    } else {
+                        Image(systemName: "clock")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(timestampText)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                // Tags
+                if !note.tags.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 4) {
+                            ForEach(note.tags.prefix(3), id: \.self) { tag in
+                                Text(tag)
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(.blue)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(
+                                        Capsule()
+                                            .fill(Color.blue.opacity(0.12))
+                                    )
+                            }
+                            if note.tags.count > 3 {
+                                Text("+\(note.tags.count - 3)")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
                 }
             }
             .contentShape(Rectangle())
@@ -1291,6 +1375,9 @@ private struct AudioNoteRow: View {
                     .buttonStyle(.borderless)
 
                     Button(role: .destructive) {
+                        if isPlayingThisNote {
+                            audioPlayer.stop()
+                        }
                         onDelete()
                     } label: {
                         Image(systemName: "trash")
@@ -1307,74 +1394,6 @@ private struct AudioNoteRow: View {
                 .fill(Color(.tertiarySystemGroupedBackground))
         )
         .onTapGesture(perform: onTap)
-        .onDisappear {
-            stopPlayback()
-        }
-    }
-
-    private func togglePlayback() {
-        if isPlaying {
-            stopPlayback()
-        } else {
-            startPlayback()
-        }
-    }
-
-    private func startPlayback() {
-        guard FileManager.default.fileExists(atPath: note.fileURL) else {
-            isPlaying = false
-            onError("Recording file is missing.")
-            return
-        }
-
-        do {
-            let url = URL(fileURLWithPath: note.fileURL)
-            playbackDelegate.onFinish = {
-                DispatchQueue.main.async {
-                    isPlaying = false
-                    playbackProgress = 1
-                    playbackTimer?.invalidate()
-                    playbackTimer = nil
-                }
-            }
-            let player = try AVAudioPlayer(contentsOf: url)
-            player.delegate = playbackDelegate
-            player.prepareToPlay()
-            player.play()
-            self.player = player
-            isPlaying = true
-            startProgressTimer()
-        } catch {
-            isPlaying = false
-            onError(error.localizedDescription)
-        }
-    }
-
-    private func stopPlayback() {
-        player?.stop()
-        player = nil
-        isPlaying = false
-        playbackTimer?.invalidate()
-        playbackTimer = nil
-    }
-
-    private func startProgressTimer() {
-        playbackTimer?.invalidate()
-        guard let player else { return }
-        playbackTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { _ in
-            let progress = player.duration > 0 ? player.currentTime / player.duration : 0
-            DispatchQueue.main.async {
-                playbackProgress = progress
-            }
-        }
-    }
-
-    private final class PlaybackDelegate: NSObject, AVAudioPlayerDelegate {
-        var onFinish: (() -> Void)?
-
-        func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-            onFinish?()
-        }
     }
 }
 
@@ -1385,18 +1404,15 @@ private struct AudioNoteDetailView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var services: AppServices
 
-    let note: AudioNote
+    @Bindable var note: AudioNote
     let onDelete: () -> Void
     let onError: (String) -> Void
 
-    @State private var transcript: String = ""
-    @State private var summary: String = ""
-    @State private var isLoading: Bool = false
-    @State private var errorMessage: String?
-    @State private var isPlaying = false
-    @State private var player: AVAudioPlayer?
-    @State private var playbackProgress: Double = 0
-    @State private var playbackTimer: Timer?
+    @State private var showingBookmarkSheet = false
+    @State private var newBookmarkNote = ""
+    @State private var editingTitle = false
+    @State private var editedTitle = ""
+    @State private var editingTranscript = false
 
     var body: some View {
         NavigationStack {
@@ -1404,14 +1420,60 @@ private struct AudioNoteDetailView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     header
 
-                    if let errorMessage {
+                    if note.effectiveTranscriptionStatus == .processing {
                         InlineStatusBanner(notice: StatusNotice(
-                            title: "Transcription failed",
-                            subtitle: errorMessage,
-                            systemImage: "exclamationmark.triangle.fill",
+                            title: "Transcribing…",
+                            subtitle: "Processing audio in background",
+                            systemImage: "waveform",
                             tint: .orange,
-                            isProgress: false
+                            isProgress: true
                         ))
+                    } else if note.effectiveTranscriptionStatus == .failed {
+                        VStack(spacing: 8) {
+                            InlineStatusBanner(notice: StatusNotice(
+                                title: "Transcription failed",
+                                subtitle: note.lastTranscriptionError ?? "Unknown error",
+                                systemImage: "exclamationmark.triangle.fill",
+                                tint: .red,
+                                isProgress: false
+                            ))
+                            Button {
+                                retryTranscription()
+                            } label: {
+                                Label("Retry Transcription", systemImage: "arrow.clockwise")
+                                    .font(.subheadline.weight(.semibold))
+                            }
+                            .buttonStyle(.borderedProminent)
+                        }
+                    }
+
+                    // Enhanced playback controls
+                    SurfaceCard {
+                        EnhancedPlaybackControlsView(
+                            audioPlayer: services.audioPlayer,
+                            note: note,
+                            compact: false
+                        )
+                    }
+
+                    // Tags management
+                    SurfaceCard {
+                        TagManagementView(tags: $note.tags)
+                    }
+
+                    // Bookmarks
+                    SurfaceCard {
+                        BookmarkListView(
+                            bookmarks: $note.bookmarks,
+                            isPlaying: services.audioPlayer.currentNoteID == note.id && services.audioPlayer.isPlaying,
+                            currentTime: services.audioPlayer.currentTime,
+                            onSeek: { timestamp in
+                                services.audioPlayer.seek(to: timestamp)
+                            },
+                            onAddBookmark: {
+                                showingBookmarkSheet = true
+                            }
+                        )
                     }
 
                     summaryCard
@@ -1420,117 +1482,134 @@ private struct AudioNoteDetailView: View {
                 .padding(16)
             }
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
-            .navigationTitle("Audio Note")
+            .navigationTitle(editingTitle ? "Edit Title" : "Audio Note")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { dismiss() }
+                    Button("Close") {
+                        if editingTitle {
+                            note.title = editedTitle
+                            try? modelContext.save()
+                        }
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .principal) {
+                    if editingTitle {
+                        TextField("Title", text: $editedTitle)
+                            .textFieldStyle(.roundedBorder)
+                            .onSubmit {
+                                note.title = editedTitle
+                                try? modelContext.save()
+                                editingTitle = false
+                            }
+                    }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Menu {
+                        Button {
+                            note.isFavorite.toggle()
+                            try? modelContext.save()
+                        } label: {
+                            Label(note.isFavorite ? "Remove from Favorites" : "Add to Favorites", systemImage: note.isFavorite ? "star.slash" : "star")
+                        }
+
+                        Button {
+                            editedTitle = note.title
+                            editingTitle.toggle()
+                        } label: {
+                            Label("Rename", systemImage: "pencil")
+                        }
+
+                        Divider()
+
                         ShareLink(item: URL(fileURLWithPath: note.fileURL)) {
                             Label("Share recording", systemImage: "square.and.arrow.up")
                         }
 
                         Button {
-                            Task { await loadContent(force: true) }
+                            retryTranscription()
                         } label: {
-                            Label("Refresh summary", systemImage: "arrow.clockwise")
+                            Label("Retry transcription", systemImage: "arrow.clockwise")
                         }
 
+                        Divider()
+
                         Button(role: .destructive) {
-                            stopPlayback()
+                            services.audioPlayer.stop()
                             onDelete()
                             dismiss()
                         } label: {
                             Label("Delete recording", systemImage: "trash")
                         }
                     } label: {
-                        if isLoading {
-                            ProgressView()
-                        } else {
-                            Image(systemName: "ellipsis.circle")
-                        }
+                        Image(systemName: "ellipsis.circle")
                     }
                 }
             }
-            .task { await loadContent(force: false) }
+            .sheet(isPresented: $showingBookmarkSheet) {
+                bookmarkSheet
+            }
             .onDisappear {
-                stopPlayback()
+                try? modelContext.save()
             }
         }
     }
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(note.title)
-                .font(.headline)
-            HStack(spacing: 12) {
-                Label(note.createdAt.formatted(date: .abbreviated, time: .shortened), systemImage: "calendar")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Label(durationText, systemImage: "timer")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+    private func retryTranscription() {
+        services.audioTranscriptionService.scheduleTranscription(for: note, in: modelContext)
+    }
 
-            Button {
-                togglePlayback()
-            } label: {
-                HStack(spacing: 10) {
-                    ZStack {
-                        Circle()
-                            .trim(from: 0, to: CGFloat(playbackProgress))
-                            .stroke(isPlaying ? Color.green : Color.blue, lineWidth: 4)
-                            .frame(width: 30, height: 30)
-                            .rotationEffect(.degrees(-90))
-                        Circle()
-                            .fill(isPlaying ? Color.green.opacity(0.2) : Color.blue.opacity(0.2))
-                            .frame(width: 28, height: 28)
-                        Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(isPlaying ? .green : .blue)
-                    }
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(isPlaying ? "Pause" : "Play recording")
-                            .font(.subheadline.weight(.semibold))
-                        Text(durationText)
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(note.title)
+                        .font(.headline)
+                    HStack(spacing: 12) {
+                        Label(note.createdAt.formatted(date: .abbreviated, time: .shortened), systemImage: "calendar")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Label(durationText, systemImage: "timer")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
-                .padding(.vertical, 8)
-                .padding(.horizontal, 12)
-                .background(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Color(.secondarySystemBackground))
-                )
+                Spacer()
+                if note.isFavorite {
+                    Image(systemName: "star.fill")
+                        .font(.title3)
+                        .foregroundStyle(.yellow)
+                }
             }
-            .buttonStyle(.plain)
+
+            if let folderName = note.folderName {
+                HStack(spacing: 6) {
+                    Image(systemName: "folder.fill")
+                        .font(.caption)
+                        .foregroundStyle(.blue)
+                    Text(folderName)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
     }
 
     private var summaryCard: some View {
         SurfaceCard {
             VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Label("Summary", systemImage: "text.quote")
-                        .font(.subheadline.weight(.semibold))
-                    Spacer()
-                    if isLoading {
-                        ProgressView()
-                            .scaleEffect(0.8)
-                    }
-                }
-                if summary.isEmpty {
-                    Text("We’ll summarize this note once transcription finishes.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                } else {
+                Label("Summary", systemImage: "text.quote")
+                    .font(.subheadline.weight(.semibold))
+                if let summary = note.summary, !summary.isEmpty {
                     Text(summary)
                         .font(.body)
                         .foregroundStyle(.primary)
                         .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("We'll summarize this note once transcription finishes.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
             }
         }
@@ -1539,21 +1618,84 @@ private struct AudioNoteDetailView: View {
     private var transcriptCard: some View {
         SurfaceCard {
             VStack(alignment: .leading, spacing: 8) {
-                Label("Transcript", systemImage: "waveform")
-                    .font(.subheadline.weight(.semibold))
+                HStack {
+                    Label("Transcript", systemImage: "waveform")
+                        .font(.subheadline.weight(.semibold))
+                    Spacer()
+                    if let transcript = note.transcript, !transcript.isEmpty {
+                        Button(editingTranscript ? "Done" : "Edit") {
+                            editingTranscript.toggle()
+                            if !editingTranscript {
+                                try? modelContext.save()
+                            }
+                        }
+                        .font(.caption.weight(.semibold))
+                        .buttonStyle(.borderless)
+                    }
+                }
 
-                if transcript.isEmpty {
+                if let transcript = note.transcript, !transcript.isEmpty {
+                    if editingTranscript {
+                        TextEditor(text: Binding(
+                            get: { note.transcript ?? "" },
+                            set: { note.transcript = $0 }
+                        ))
+                        .frame(minHeight: 200)
+                        .font(.body)
+                    } else {
+                        Text(transcript)
+                            .font(.body)
+                            .foregroundStyle(.primary)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                } else {
                     Text("Transcription will appear here.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
-                } else {
-                    Text(transcript)
-                        .font(.body)
-                        .foregroundStyle(.primary)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
+    }
+
+    private var bookmarkSheet: some View {
+        NavigationStack {
+            VStack(spacing: 16) {
+                Text("Add bookmark at \(formatTime(services.audioPlayer.currentTime))")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+
+                TextField("Note (optional)", text: $newBookmarkNote, axis: .vertical)
+                    .textFieldStyle(.roundedBorder)
+                    .lineLimit(3...6)
+
+                Spacer()
+            }
+            .padding()
+            .navigationTitle("New Bookmark")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        showingBookmarkSheet = false
+                        newBookmarkNote = ""
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Add") {
+                        let bookmark = AudioBookmark(
+                            timestamp: services.audioPlayer.currentTime,
+                            note: newBookmarkNote.isEmpty ? "Bookmark" : newBookmarkNote
+                        )
+                        note.bookmarks.append(bookmark)
+                        try? modelContext.save()
+                        showingBookmarkSheet = false
+                        newBookmarkNote = ""
+                    }
+                }
+            }
+        }
+        .presentationDetents([.height(250)])
     }
 
     private var durationText: String {
@@ -1564,93 +1706,10 @@ private struct AudioNoteDetailView: View {
         return formatter.string(from: note.duration) ?? "0:00"
     }
 
-    @MainActor
-    private func loadContent(force: Bool) async {
-        guard !isLoading else { return }
-        isLoading = true
-        defer { isLoading = false }
-
-        do {
-            let transcriptText: String
-            if force {
-                // Clear cached values before reprocessing
-                note.transcript = nil
-                note.summary = nil
-                try? modelContext.save()
-                transcriptText = try await services.audioNoteManager.transcribeIfNeeded(note: note)
-            } else {
-                transcriptText = try await services.audioNoteManager.transcribeIfNeeded(note: note)
-            }
-            transcript = transcriptText
-
-            let summaryText = try await services.audioNoteManager.summarizeIfNeeded(note: note, transcript: transcriptText)
-            summary = summaryText
-            try? modelContext.save()
-            errorMessage = nil
-        } catch {
-            errorMessage = error.localizedDescription
-            onError(error.localizedDescription)
-        }
-    }
-
-    private func togglePlayback() {
-        if isPlaying {
-            stopPlayback()
-        } else {
-            startPlayback()
-        }
-    }
-
-    private func startPlayback() {
-        guard FileManager.default.fileExists(atPath: note.fileURL) else {
-            onError("Recording file is missing.")
-            return
-        }
-        do {
-            let audioURL = URL(fileURLWithPath: note.fileURL)
-            let player = try AVAudioPlayer(contentsOf: audioURL)
-            player.delegate = DetailPlaybackDelegate { [self] in
-                isPlaying = false
-                self.player = nil
-            }
-            player.prepareToPlay()
-            player.play()
-            self.player = player
-            isPlaying = true
-        } catch {
-            onError(error.localizedDescription)
-        }
-    }
-
-    private func stopPlayback() {
-        player?.stop()
-        player = nil
-        isPlaying = false
-        playbackTimer?.invalidate()
-        playbackTimer = nil
-    }
-
-    private final class DetailPlaybackDelegate: NSObject, AVAudioPlayerDelegate {
-        let onFinish: () -> Void
-
-        init(onFinish: @escaping () -> Void) {
-            self.onFinish = onFinish
-        }
-
-        func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-            onFinish()
-        }
-    }
-
-    private func startProgressTimer() {
-        playbackTimer?.invalidate()
-        guard let player else { return }
-        playbackTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { _ in
-            let progress = player.duration > 0 ? player.currentTime / player.duration : 0
-            DispatchQueue.main.async {
-                playbackProgress = progress
-            }
-        }
+    private func formatTime(_ time: TimeInterval) -> String {
+        let minutes = Int(time) / 60
+        let seconds = Int(time) % 60
+        return String(format: "%d:%02d", minutes, seconds)
     }
 }
 
@@ -1773,7 +1832,8 @@ struct DocumentRow: View {
 
     private var matchPercent: Int? {
         guard let score else { return nil }
-        let weighted = (score.keyword * 0.6) + (score.semantic * 0.4)
+        // Use same weights as LibSQLSemanticSearchEngine (30% keyword, 70% semantic)
+        let weighted = (score.keyword * 0.3) + (score.semantic * 0.7)
         return Int((min(max(weighted, 0), 1) * 100).rounded())
     }
 

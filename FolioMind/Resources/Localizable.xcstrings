@@ -1,6 +1,9 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "-%@" : {
+
+    },
     "“March rent receipt”" : {
       "localizations" : {
         "en" : {
@@ -22,6 +25,12 @@
           }
         }
       }
+    },
+    "(%lld)" : {
+
+    },
+    "%.2g×" : {
+
     },
     "%lld" : {
       "localizations" : {
@@ -88,6 +97,9 @@
           }
         }
       }
+    },
+    "%lld failed" : {
+
     },
     "%lld of %lld" : {
       "localizations" : {
@@ -165,6 +177,16 @@
         }
       }
     },
+    "%lld/%lld" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld/%2$lld"
+          }
+        }
+      }
+    },
     "%lld%% match" : {
       "localizations" : {
         "en" : {
@@ -188,6 +210,9 @@
       }
     },
     "• %@" : {
+
+    },
+    "+%lld" : {
 
     },
     "1.0.0" : {
@@ -256,6 +281,9 @@
         }
       }
     },
+    "Actions" : {
+
+    },
     "Add" : {
       "localizations" : {
         "en" : {
@@ -300,6 +328,9 @@
           }
         }
       }
+    },
+    "Add bookmark at %@" : {
+
     },
     "Add Images" : {
       "localizations" : {
@@ -367,6 +398,9 @@
         }
       }
     },
+    "Add to Favorites" : {
+
+    },
     "AI fused fields" : {
       "localizations" : {
         "en" : {
@@ -388,6 +422,9 @@
           }
         }
       }
+    },
+    "All documents have been migrated to the new vector search system." : {
+
     },
     "Analyzing in background" : {
 
@@ -912,6 +949,9 @@
           }
         }
       }
+    },
+    "Bookmarks" : {
+
     },
     "Bring in a document from your camera or photo library." : {
       "localizations" : {
@@ -1577,6 +1617,9 @@
         }
       }
     },
+    "Delete Selected" : {
+
+    },
     "Document Details" : {
       "localizations" : {
         "en" : {
@@ -2011,6 +2054,9 @@
         }
       }
     },
+    "Edit Title" : {
+
+    },
     "Email" : {
 
     },
@@ -2079,6 +2125,9 @@
           }
         }
       }
+    },
+    "Error: %@" : {
+
     },
     "Expand" : {
       "localizations" : {
@@ -2167,6 +2216,12 @@
           }
         }
       }
+    },
+    "Favorite" : {
+
+    },
+    "Features" : {
+
     },
     "field.source.fused" : {
       "comment" : "Field source: Fused from multiple sources",
@@ -2531,6 +2586,9 @@
         }
       }
     },
+    "Improve search quality with Apple's on-device embeddings. All processing happens locally for privacy." : {
+
+    },
     "Intelligence" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -2810,6 +2868,15 @@
         }
       }
     },
+    "Migrating..." : {
+
+    },
+    "Migration" : {
+
+    },
+    "Migration Complete" : {
+
+    },
     "Modified" : {
       "localizations" : {
         "en" : {
@@ -2857,6 +2924,9 @@
     "Name" : {
 
     },
+    "New Bookmark" : {
+
+    },
     "Nice — your first folio!" : {
       "localizations" : {
         "en" : {
@@ -2878,6 +2948,9 @@
           }
         }
       }
+    },
+    "No bookmarks yet" : {
+
     },
     "No Cloud Storage" : {
       "localizations" : {
@@ -3100,6 +3173,9 @@
         }
       }
     },
+    "No tags yet. Tap 'Add' to create one." : {
+
+    },
     "No text extracted" : {
       "localizations" : {
         "en" : {
@@ -3165,6 +3241,9 @@
           }
         }
       }
+    },
+    "Note (optional)" : {
+
     },
     "Notes (optional)" : {
       "localizations" : {
@@ -3415,6 +3494,7 @@
       }
     },
     "Pause" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3435,6 +3515,9 @@
           }
         }
       }
+    },
+    "Paused" : {
+
     },
     "People & Places" : {
       "localizations" : {
@@ -3503,6 +3586,7 @@
       }
     },
     "Play recording" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3523,6 +3607,9 @@
           }
         }
       }
+    },
+    "Play the recording to add bookmarks" : {
+
     },
     "Please restart the app for this change to take effect." : {
       "extractionState" : "stale",
@@ -3667,6 +3754,9 @@
         }
       }
     },
+    "Re-migrate All" : {
+
+    },
     "Re-run Extraction" : {
       "localizations" : {
         "en" : {
@@ -3733,6 +3823,9 @@
         }
       }
     },
+    "Recording" : {
+
+    },
     "Recording audio…" : {
       "localizations" : {
         "en" : {
@@ -3756,6 +3849,7 @@
       }
     },
     "Recording… tap Stop when finished" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3801,6 +3895,7 @@
       }
     },
     "Refresh summary" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -4060,6 +4155,12 @@
         }
       }
     },
+    "Remove from Favorites" : {
+
+    },
+    "Rename" : {
+
+    },
     "Requires iOS 18.2+ or later" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -4149,6 +4250,9 @@
         }
       }
     },
+    "Resolving addresses..." : {
+
+    },
     "Restart app to apply language change" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -4194,6 +4298,15 @@
           }
         }
       }
+    },
+    "Resume" : {
+
+    },
+    "Retry transcription" : {
+
+    },
+    "Retry Transcription" : {
+
     },
     "Review & Trim" : {
 
@@ -4490,6 +4603,12 @@
         }
       }
     },
+    "Search notes or transcripts" : {
+
+    },
+    "Search Upgrade" : {
+
+    },
     "Searching…" : {
       "localizations" : {
         "en" : {
@@ -4533,6 +4652,9 @@
           }
         }
       }
+    },
+    "Select" : {
+
     },
     "Session Expired" : {
 
@@ -4807,6 +4929,9 @@
         }
       }
     },
+    "Start Migration" : {
+
+    },
     "Start organizing" : {
       "localizations" : {
         "en" : {
@@ -4853,6 +4978,7 @@
       }
     },
     "Stop" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -4870,6 +4996,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "停止"
+          }
+        }
+      }
+    },
+    "Successfully migrated %lld documents with %lld failures." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Successfully migrated %1$lld documents with %2$lld failures."
           }
         }
       }
@@ -4918,6 +5054,15 @@
         }
       }
     },
+    "Tag" : {
+
+    },
+    "Tag name" : {
+
+    },
+    "Tags" : {
+
+    },
     "Tap into a card to see fields, people, and reminders" : {
       "localizations" : {
         "en" : {
@@ -4939,6 +5084,9 @@
           }
         }
       }
+    },
+    "Technical Details" : {
+
     },
     "This document doesn't have any structured data" : {
       "localizations" : {
@@ -5051,6 +5199,12 @@
         }
       }
     },
+    "Toggle Favorites" : {
+
+    },
+    "Transcribing…" : {
+
+    },
     "Transcript" : {
       "localizations" : {
         "en" : {
@@ -5073,6 +5227,9 @@
         }
       }
     },
+    "Transcription failed" : {
+
+    },
     "Transcription will appear here." : {
       "localizations" : {
         "en" : {
@@ -5094,6 +5251,9 @@
           }
         }
       }
+    },
+    "Try adjusting your search" : {
+
     },
     "Try clearing the filter or adding a document for %@" : {
       "localizations" : {
@@ -5182,6 +5342,15 @@
           }
         }
       }
+    },
+    "Unfavorite" : {
+
+    },
+    "Upgrade to semantic search with on-device AI" : {
+
+    },
+    "Upgrade your documents to use Apple's on-device embeddings for improved semantic search quality." : {
+
     },
     "Use & Process" : {
 
@@ -5368,6 +5537,9 @@
         }
       }
     },
+    "Vector Search Upgrade" : {
+
+    },
     "Version" : {
       "localizations" : {
         "en" : {
@@ -5545,7 +5717,6 @@
       }
     },
     "We'll summarize this note once transcription finishes." : {
-      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -5568,6 +5739,7 @@
       }
     },
     "We’ll summarize this note once transcription finishes." : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
