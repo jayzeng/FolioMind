@@ -84,15 +84,16 @@ struct AudioNotesListView: View {
         }
 
         let order = ["Today", "Yesterday", "This Week", "This Month"]
-        return grouped.sorted { a, b in
-            if let aIndex = order.firstIndex(of: a.key), let bIndex = order.firstIndex(of: b.key) {
-                return aIndex < bIndex
-            } else if order.contains(a.key) {
+        return grouped.sorted { first, second in
+            if let firstIndex = order.firstIndex(of: first.key),
+               let secondIndex = order.firstIndex(of: second.key) {
+                return firstIndex < secondIndex
+            } else if order.contains(first.key) {
                 return true
-            } else if order.contains(b.key) {
+            } else if order.contains(second.key) {
                 return false
             } else {
-                return a.key > b.key
+                return first.key > second.key
             }
         }
     }
@@ -474,7 +475,10 @@ struct SimpleAudioNoteDetailView: View {
                         note.isFavorite.toggle()
                         try? modelContext.save()
                     } label: {
-                        Label(note.isFavorite ? "Remove from Favorites" : "Add to Favorites", systemImage: note.isFavorite ? "star.slash" : "star")
+                        Label(
+                            note.isFavorite ? "Remove from Favorites" : "Add to Favorites",
+                            systemImage: note.isFavorite ? "star.slash" : "star"
+                        )
                     }
 
                     ShareLink(item: URL(fileURLWithPath: note.fileURL)) {

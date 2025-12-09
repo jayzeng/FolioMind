@@ -178,6 +178,8 @@ struct ContentView: View {
     @State private var selectedSpotlightID: String?
     @State private var noteToShow: AudioNote?
     @State private var searchDebounceTask: Task<Void, Never>?
+    @State private var showPeopleList: Bool = false
+    @State private var showPlacesList: Bool = false
 
     private var scannerAvailable: Bool {
         DocumentScannerView.isAvailable
@@ -210,7 +212,27 @@ struct ContentView: View {
                 }
             }
 
-            if let location = cleanedLocation(document.location) {
+            // Handle new structured locations
+            for location in document.locations {
+                let normalized = normalizedLabel(location.label)
+                guard !normalized.isEmpty else { continue }
+                let id = "location:\(normalized)"
+
+                if var existing = summaries[id] {
+                    existing.documentIDs.insert(document.id)
+                    summaries[id] = existing
+                } else {
+                    summaries[id] = SpotlightSummary(
+                        kind: .location,
+                        displayName: location.label,
+                        normalizedValue: normalized,
+                        documentIDs: [document.id]
+                    )
+                }
+            }
+
+            // Fallback to old location field for backward compatibility
+            if document.locations.isEmpty, let location = cleanedLocation(document.location) {
                 let normalized = normalizedLabel(location)
                 guard !normalized.isEmpty else { continue }
                 let id = "location:\(normalized)"
@@ -238,6 +260,22 @@ struct ContentView: View {
             }
             return $0.documentCount > $1.documentCount
         }
+    }
+
+    private var peopleSummaries: [SpotlightSummary] {
+        spotlightSummaries.filter { $0.kind == .person }
+    }
+
+    private var placesSummaries: [SpotlightSummary] {
+        spotlightSummaries.filter { $0.kind == .location }
+    }
+
+    private var topPeople: [SpotlightSummary] {
+        Array(peopleSummaries.prefix(5))
+    }
+
+    private var topPlaces: [SpotlightSummary] {
+        Array(placesSummaries.prefix(5))
     }
 
     private var selectedSpotlightName: String? {
@@ -399,6 +437,24 @@ struct ContentView: View {
                 NavigationStack {
                     DocumentEditView(document: document)
                 }
+            }
+            .sheet(isPresented: $showPeopleList) {
+                SpotlightListSheet(
+                    title: "People",
+                    items: peopleSummaries,
+                    onSelect: { selected in
+                        selectedSpotlightID = selected.id
+                    }
+                )
+            }
+            .sheet(isPresented: $showPlacesList) {
+                SpotlightListSheet(
+                    title: "Places",
+                    items: placesSummaries,
+                    onSelect: { selected in
+                        selectedSpotlightID = selected.id
+                    }
+                )
             }
             .alert("Delete Document", isPresented: $showDeleteConfirmation, presenting: documentToDelete, actions: { _ in
                 Button("Cancel", role: .cancel) {
@@ -817,13 +873,14 @@ struct ContentView: View {
     @ViewBuilder
     private func spotlightSection(_ items: [SpotlightSummary]) -> some View {
         SurfaceCard {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 12) {
+                // Header
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("People & Places")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
-                        Text("\(items.count) detected")
+                        Text("\(peopleSummaries.count) people, \(placesSummaries.count) places")
                             .font(.caption)
                             .foregroundStyle(.tertiary)
                     }
@@ -832,7 +889,7 @@ struct ContentView: View {
                         Button {
                             selectedSpotlightID = nil
                         } label: {
-                            Label("Clear", systemImage: "line.3.horizontal.decrease.circle")
+                            Label("Clear", systemImage: "xmark.circle.fill")
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(.blue)
                         }
@@ -840,23 +897,98 @@ struct ContentView: View {
                     }
                 }
 
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) {
-                        ForEach(items) { item in
-                            SpotlightChip(
-                                item: item,
-                                isSelected: selectedSpotlightID == item.id,
-                                onTap: {
-                                    if selectedSpotlightID == item.id {
-                                        selectedSpotlightID = nil
-                                    } else {
-                                        selectedSpotlightID = item.id
+                // People Section
+                if !peopleSummaries.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Label("People", systemImage: "person.2.fill")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(.blue)
+                                .textCase(.uppercase)
+
+                            Spacer()
+
+                            if peopleSummaries.count > 5 {
+                                Button {
+                                    showPeopleList = true
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Text("All (\(peopleSummaries.count))")
+                                            .font(.caption2.weight(.semibold))
+                                        Image(systemName: "chevron.right")
+                                            .font(.caption2)
                                     }
+                                    .foregroundStyle(.blue)
                                 }
-                            )
+                                .buttonStyle(.plain)
+                            }
+                        }
+
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 10) {
+                                ForEach(topPeople) { item in
+                                    CompactSpotlightChip(
+                                        item: item,
+                                        isSelected: selectedSpotlightID == item.id,
+                                        onTap: {
+                                            if selectedSpotlightID == item.id {
+                                                selectedSpotlightID = nil
+                                            } else {
+                                                selectedSpotlightID = item.id
+                                            }
+                                        }
+                                    )
+                                }
+                            }
                         }
                     }
-                    .padding(.vertical, 4)
+                }
+
+                // Places Section
+                if !placesSummaries.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Label("Places", systemImage: "mappin.and.ellipse")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(.pink)
+                                .textCase(.uppercase)
+
+                            Spacer()
+
+                            if placesSummaries.count > 5 {
+                                Button {
+                                    showPlacesList = true
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Text("All (\(placesSummaries.count))")
+                                            .font(.caption2.weight(.semibold))
+                                        Image(systemName: "chevron.right")
+                                            .font(.caption2)
+                                    }
+                                    .foregroundStyle(.pink)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 10) {
+                                ForEach(topPlaces) { item in
+                                    CompactSpotlightChip(
+                                        item: item,
+                                        isSelected: selectedSpotlightID == item.id,
+                                        onTap: {
+                                            if selectedSpotlightID == item.id {
+                                                selectedSpotlightID = nil
+                                            } else {
+                                                selectedSpotlightID = item.id
+                                            }
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1216,8 +1348,17 @@ struct ContentView: View {
         case .person:
             return personNames(for: document).contains { normalizedLabel($0) == filter.normalizedValue }
         case .location:
-            guard let location = cleanedLocation(document.location) else { return false }
-            return normalizedLabel(location) == filter.normalizedValue
+            // Check new structured locations first
+            if document.locations.contains(where: { normalizedLabel($0.label) == filter.normalizedValue }) {
+                return true
+            }
+
+            // Fallback to old location field for backward compatibility
+            if let location = cleanedLocation(document.location) {
+                return normalizedLabel(location) == filter.normalizedValue
+            }
+
+            return false
         }
     }
 
@@ -1511,7 +1652,10 @@ private struct AudioNoteDetailView: View {
                             note.isFavorite.toggle()
                             try? modelContext.save()
                         } label: {
-                            Label(note.isFavorite ? "Remove from Favorites" : "Add to Favorites", systemImage: note.isFavorite ? "star.slash" : "star")
+                            Label(
+                                note.isFavorite ? "Remove from Favorites" : "Add to Favorites",
+                                systemImage: note.isFavorite ? "star.slash" : "star"
+                            )
                         }
 
                         Button {
@@ -1814,6 +1958,141 @@ private struct SpotlightChip: View {
             )
         }
         .buttonStyle(.plain)
+    }
+}
+
+private struct CompactSpotlightChip: View {
+    let item: SpotlightSummary
+    let isSelected: Bool
+    let onTap: () -> Void
+
+    private var tint: Color { item.kind.accentColor }
+
+    var body: some View {
+        Button(action: onTap) {
+            VStack(spacing: 6) {
+                ZStack {
+                    Circle()
+                        .fill(isSelected ? tint.opacity(0.18) : Color(.tertiarySystemGroupedBackground))
+                        .frame(width: 50, height: 50)
+                    if item.kind == .person {
+                        Text(item.initials.uppercased())
+                            .font(.body.weight(.bold))
+                            .foregroundStyle(isSelected ? tint : .secondary)
+                    } else {
+                        Image(systemName: item.kind.symbolName)
+                            .font(.system(size: 20, weight: .semibold))
+                            .foregroundStyle(isSelected ? tint : .secondary)
+                    }
+                }
+
+                VStack(spacing: 2) {
+                    Text(item.displayName)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    Text("\(item.documentCount)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(width: 60)
+            }
+            .padding(8)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(isSelected ? tint.opacity(0.08) : Color.clear)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(isSelected ? tint : Color.clear, lineWidth: 1.5)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct SpotlightListSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let title: String
+    let items: [SpotlightSummary]
+    let onSelect: (SpotlightSummary) -> Void
+
+    @State private var searchText: String = ""
+
+    private var filteredItems: [SpotlightSummary] {
+        if searchText.isEmpty {
+            return items
+        }
+        return items.filter {
+            $0.displayName.localizedCaseInsensitiveContains(searchText)
+        }
+    }
+
+    private var groupedItems: [(String, [SpotlightSummary])] {
+        let grouped = Dictionary(grouping: filteredItems) { item in
+            String(item.displayName.prefix(1)).uppercased()
+        }
+        return grouped.sorted { $0.key < $1.key }
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(groupedItems, id: \.0) { section, items in
+                    Section(section) {
+                        ForEach(items) { item in
+                            Button {
+                                onSelect(item)
+                                dismiss()
+                            } label: {
+                                HStack(spacing: 12) {
+                                    ZStack {
+                                        Circle()
+                                            .fill(item.kind.accentColor.opacity(0.15))
+                                            .frame(width: 40, height: 40)
+                                        if item.kind == .person {
+                                            Text(item.initials.uppercased())
+                                                .font(.caption.weight(.bold))
+                                                .foregroundStyle(item.kind.accentColor)
+                                        } else {
+                                            Image(systemName: item.kind.symbolName)
+                                                .font(.system(size: 16, weight: .semibold))
+                                                .foregroundStyle(item.kind.accentColor)
+                                        }
+                                    }
+
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(item.displayName)
+                                            .font(.subheadline.weight(.semibold))
+                                            .foregroundStyle(.primary)
+                                        Text("\(item.documentCount) document\(item.documentCount == 1 ? "" : "s")")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+
+                                    Spacer()
+
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption)
+                                        .foregroundStyle(.tertiary)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+            .searchable(text: $searchText, prompt: "Search \(title.lowercased())")
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") {
+                        dismiss()
+                    }
+                }
+            }
+        }
     }
 }
 

@@ -284,7 +284,129 @@ final class LibSQLStore {
 
             try upsertEmbedding(db: db, entityID: document.id, embedding: embedding)
             try syncAssets(db: db, document: document)
+            try updateFTSLocationLabels(db: db, document: document)
         }
+    }
+
+    /// Migrate FTS table to include location_labels column if it doesn't exist
+    private func migrateFTSTableIfNeeded(db: OpaquePointer?) throws {
+        // Check if FTS table exists
+        let checkTableSQL = "SELECT name FROM sqlite_master WHERE type='table' AND name='documents_fts';"
+        var checkStmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, checkTableSQL, -1, &checkStmt, nil) == SQLITE_OK else {
+            return // Can't check, skip migration
+        }
+
+        let ftsExists = sqlite3_step(checkStmt) == SQLITE_ROW
+        sqlite3_finalize(checkStmt)
+
+        guard ftsExists else {
+            return // FTS doesn't exist yet, will be created fresh
+        }
+
+        // Check if location_labels column exists
+        let checkColumnSQL = "SELECT location_labels FROM documents_fts LIMIT 1;"
+        var columnStmt: OpaquePointer?
+        let hasColumn = sqlite3_prepare_v2(db, checkColumnSQL, -1, &columnStmt, nil) == SQLITE_OK
+
+        if hasColumn {
+            sqlite3_finalize(columnStmt)
+            return // Column exists, no migration needed
+        }
+
+        // Need to recreate FTS table with new schema
+        print("Migrating FTS table to include location_labels...")
+
+        // Drop old triggers
+        _ = sqlite3_exec(db, "DROP TRIGGER IF EXISTS documents_fts_ai;", nil, nil, nil)
+        _ = sqlite3_exec(db, "DROP TRIGGER IF EXISTS documents_fts_au;", nil, nil, nil)
+        _ = sqlite3_exec(db, "DROP TRIGGER IF EXISTS documents_fts_ad;", nil, nil, nil)
+
+        // Drop old FTS table
+        _ = sqlite3_exec(db, "DROP TABLE IF EXISTS documents_fts;", nil, nil, nil)
+
+        // New table will be created by the CREATE IF NOT EXISTS statement after this migration
+        print("FTS migration complete. Table will be rebuilt with new schema.")
+    }
+
+    /// Rebuild FTS index for all documents (call after migration or when adding location labels)
+    func rebuildFTSIndex(documents: [Document]) throws {
+        try withConnection { db in
+            // Clear existing FTS entries
+            let deleteSQL = "DELETE FROM documents_fts;"
+            if sqlite3_exec(db, deleteSQL, nil, nil, nil) != SQLITE_OK {
+                // FTS might not exist, continue
+                return
+            }
+
+            // Re-insert all documents with location labels
+            for document in documents {
+                let locationLabelsText = document.locations.map { location in
+                    "\(location.label) \(location.rawValue)"
+                }.joined(separator: " ")
+
+                let sql = """
+                INSERT INTO documents_fts(document_id, title, ocr_text, cleaned_text, location, location_labels)
+                VALUES (?, ?, ?, ?, ?, ?);
+                """
+
+                var stmt: OpaquePointer?
+                guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+                    continue // Skip if FTS not available
+                }
+                defer { sqlite3_finalize(stmt) }
+
+                sqlite3_bind_text(stmt, 1, document.id.uuidString, -1, sqliteTransientDestructor)
+                sqlite3_bind_text(stmt, 2, document.title, -1, sqliteTransientDestructor)
+                sqlite3_bind_text(stmt, 3, document.ocrText, -1, sqliteTransientDestructor)
+
+                if let cleaned = document.cleanedText {
+                    sqlite3_bind_text(stmt, 4, cleaned, -1, sqliteTransientDestructor)
+                } else {
+                    sqlite3_bind_null(stmt, 4)
+                }
+
+                if let location = document.location {
+                    sqlite3_bind_text(stmt, 5, location, -1, sqliteTransientDestructor)
+                } else {
+                    sqlite3_bind_null(stmt, 5)
+                }
+
+                sqlite3_bind_text(stmt, 6, locationLabelsText, -1, sqliteTransientDestructor)
+
+                _ = sqlite3_step(stmt)
+            }
+
+            print("FTS index rebuilt with \(documents.count) documents")
+        }
+    }
+
+    /// Update FTS location_labels column with concatenated location labels
+    private func updateFTSLocationLabels(db: OpaquePointer?, document: Document) throws {
+        // Build searchable location labels text
+        let locationLabelsText = document.locations.map { location in
+            "\(location.label) \(location.rawValue)"
+        }.joined(separator: " ")
+
+        // Update FTS table (only if FTS exists)
+        let sql = """
+        UPDATE documents_fts
+        SET location_labels = ?
+        WHERE document_id = ?;
+        """
+
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            // FTS might not exist, silently continue
+            return
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        sqlite3_bind_text(stmt, 1, locationLabelsText, -1, sqliteTransientDestructor)
+        sqlite3_bind_text(stmt, 2, document.id.uuidString, -1, sqliteTransientDestructor)
+
+        // Execute (ignore errors if FTS doesn't exist)
+        _ = sqlite3_step(stmt)
     }
 
     func deleteDocument(id: UUID) throws {
@@ -518,6 +640,9 @@ final class LibSQLStore {
                 throw StoreError.statementFailed(errorMessage(from: db))
             }
 
+            // Migrate FTS table if needed (add location_labels column)
+            try migrateFTSTableIfNeeded(db: db)
+
             // Create FTS5 virtual tables for full-text search
             let createDocumentsFTS = """
             CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
@@ -526,6 +651,7 @@ final class LibSQLStore {
                 ocr_text,
                 cleaned_text,
                 location,
+                location_labels,
                 tokenize='unicode61 remove_diacritics 2'
             );
             """
@@ -538,8 +664,8 @@ final class LibSQLStore {
             // Create triggers to keep FTS in sync with documents table
             let createFTSTriggerInsert = """
             CREATE TRIGGER IF NOT EXISTS documents_fts_ai AFTER INSERT ON documents BEGIN
-                INSERT INTO documents_fts(document_id, title, ocr_text, cleaned_text, location)
-                VALUES(new.id, new.title, new.ocr_text, new.cleaned_text, new.location);
+                INSERT INTO documents_fts(document_id, title, ocr_text, cleaned_text, location, location_labels)
+                VALUES(new.id, new.title, new.ocr_text, new.cleaned_text, new.location, '');
             END;
             """
 

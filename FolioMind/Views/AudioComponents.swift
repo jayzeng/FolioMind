@@ -280,14 +280,14 @@ struct TagManagementView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
-                Button(action: {
+                Button {
                     withAnimation {
                         isAddingTag = true
                     }
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                         addFieldFocused = true
                     }
-                }) {
+                } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "plus.circle.fill")
                         Text("Add")
@@ -509,7 +509,14 @@ struct FlowLayout: Layout {
             spacing: spacing
         )
         for (index, subview) in subviews.enumerated() {
-            subview.place(at: CGPoint(x: bounds.minX + result.positions[index].x, y: bounds.minY + result.positions[index].y), proposal: .unspecified)
+            let placement = result.positions[index]
+            subview.place(
+                at: CGPoint(
+                    x: bounds.minX + placement.x,
+                    y: bounds.minY + placement.y
+                ),
+                proposal: .unspecified
+            )
         }
     }
 
@@ -518,25 +525,25 @@ struct FlowLayout: Layout {
         var positions: [CGPoint] = []
 
         init(in maxWidth: CGFloat, subviews: Subviews, spacing: CGFloat) {
-            var x: CGFloat = 0
-            var y: CGFloat = 0
+            var currentX: CGFloat = 0
+            var currentY: CGFloat = 0
             var lineHeight: CGFloat = 0
 
             for subview in subviews {
                 let size = subview.sizeThatFits(.unspecified)
 
-                if x + size.width > maxWidth && x > 0 {
-                    x = 0
-                    y += lineHeight + spacing
+                if currentX + size.width > maxWidth && currentX > 0 {
+                    currentX = 0
+                    currentY += lineHeight + spacing
                     lineHeight = 0
                 }
 
-                positions.append(CGPoint(x: x, y: y))
+                positions.append(CGPoint(x: currentX, y: currentY))
                 lineHeight = max(lineHeight, size.height)
-                x += size.width + spacing
+                currentX += size.width + spacing
             }
 
-            self.size = CGSize(width: maxWidth, height: y + lineHeight)
+            self.size = CGSize(width: maxWidth, height: currentY + lineHeight)
         }
     }
 }

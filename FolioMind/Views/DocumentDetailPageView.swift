@@ -39,6 +39,8 @@ struct DocumentDetailPageView: View {
     @State private var showAddImageOptions: Bool = false
     @State private var showScannerForAdd: Bool = false
     @State private var showPhotoLibraryPicker: Bool = false
+    @State private var showAddLocationSheet: Bool = false
+    @State private var locationToEdit: DocumentLocation?
 
     enum DetailTab: String, CaseIterable {
         case overview = "Overview"
@@ -762,8 +764,89 @@ struct DocumentDetailPageView: View {
 
     private func locationSection(locations: [String]) -> some View {
         VStack(spacing: 12) {
-            SectionHeader(title: locations.count > 1 ? "Locations" : "Capture Location", icon: "location.fill")
-            MapLocationView(locationStrings: locations)
+            HStack {
+                let locationTitle: String = {
+                    if document.locations.isEmpty {
+                        return "Locations"
+                    } else if document.locations.count > 1 {
+                        return "Locations (\(document.locations.count))"
+                    } else {
+                        return "Location"
+                    }
+                }()
+
+                SectionHeader(
+                    title: locationTitle,
+                    icon: "location.fill"
+                )
+                Spacer()
+                Button {
+                    showAddLocationSheet = true
+                } label: {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(.blue)
+                }
+            }
+
+            // Use structured locations if available, otherwise fall back to old format
+            if !document.locations.isEmpty {
+                MapLocationView(
+                    locations: document.locations,
+                    onEdit: { location in
+                        locationToEdit = location
+                    }
+                )
+
+                // List of locations with edit/delete
+                VStack(spacing: 8) {
+                    ForEach(document.locations) { location in
+                        LocationRow(
+                            location: location,
+                            onEdit: {
+                                locationToEdit = location
+                            },
+                            onDelete: {
+                                deleteLocation(location)
+                            }
+                        )
+                    }
+                }
+            } else if !locations.isEmpty {
+                // Legacy locations - show with "Add Label" button
+                MapLocationView(
+                    locationStrings: locations,
+                    onAddLabel: {
+                        // Migrate and open edit for first location
+                        document.migrateLocationIfNeeded()
+                        try? modelContext.save()
+                        if let firstLocation = document.locations.first {
+                            locationToEdit = firstLocation
+                        }
+                    }
+                )
+            } else {
+                // Empty state
+                VStack(spacing: 12) {
+                    Image(systemName: "mappin.slash")
+                        .font(.system(size: 32))
+                        .foregroundStyle(.secondary)
+                    Text("No locations added")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Button {
+                        showAddLocationSheet = true
+                    } label: {
+                        Text("Add Location")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.blue)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 32)
+                .background(Color(.secondarySystemGroupedBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+            }
         }
     }
 
@@ -856,6 +939,29 @@ struct DocumentDetailPageView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("FolioMind needs permission to create reminders. Please enable Reminders access in Settings.")
+        }
+        .sheet(isPresented: $showAddLocationSheet) {
+            AddLocationSheet(
+                document: document,
+                onSave: { newLocation in
+                    document.locations.append(newLocation)
+                    try? modelContext.save()
+                    showAddLocationSheet = false
+                }
+            )
+        }
+        .sheet(item: $locationToEdit) { location in
+            EditLocationSheet(
+                location: location,
+                document: document,
+                onSave: { updatedLocation in
+                    if let index = document.locations.firstIndex(where: { $0.id == location.id }) {
+                        document.locations[index] = updatedLocation
+                        try? modelContext.save()
+                    }
+                    locationToEdit = nil
+                }
+            )
         }
     }
 
@@ -1504,6 +1610,13 @@ struct DocumentDetailPageView: View {
             return true
         case .vision:
             return false
+        }
+    }
+
+    private func deleteLocation(_ location: DocumentLocation) {
+        if let index = document.locations.firstIndex(where: { $0.id == location.id }) {
+            document.locations.remove(at: index)
+            try? modelContext.save()
         }
     }
 
@@ -3210,4 +3323,311 @@ struct ActivityViewController: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+// MARK: - Location Management Components
+
+private struct LocationRow: View {
+    let location: DocumentLocation
+    let onEdit: () -> Void
+    let onDelete: () -> Void
+
+    private var categoryColor: Color {
+        switch location.category {
+        case .home: return .blue
+        case .work: return .orange
+        case .school: return .purple
+        case .medical: return .red
+        case .custom: return .pink
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            // Icon
+            ZStack {
+                Circle()
+                    .fill(categoryColor.opacity(0.15))
+                    .frame(width: 40, height: 40)
+                Image(systemName: location.category.icon)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(categoryColor)
+            }
+
+            // Info
+            VStack(alignment: .leading, spacing: 4) {
+                Text(location.label)
+                    .font(.subheadline.weight(.semibold))
+                Text(location.rawValue)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            // Actions
+            HStack(spacing: 16) {
+                Button {
+                    onEdit()
+                } label: {
+                    Image(systemName: "pencil.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(.blue)
+                }
+                .buttonStyle(.plain)
+
+                Button(role: .destructive) {
+                    onDelete()
+                } label: {
+                    Image(systemName: "trash.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(.red)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(12)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+}
+
+private struct AddLocationSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let document: Document
+    let onSave: (DocumentLocation) -> Void
+
+    @State private var label: String = ""
+    @State private var rawValue: String = ""
+    @State private var inputType: LocationInputType = .address
+    @State private var category: LocationCategory = .custom
+    @State private var latitude: String = ""
+    @State private var longitude: String = ""
+
+    enum LocationInputType {
+        case address
+        case coordinates
+        case current
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Label") {
+                    TextField("e.g., Home, Office, Hospital", text: $label)
+
+                    // Quick label buttons
+                    HStack(spacing: 8) {
+                        ForEach([LocationCategory.home, .work, .school, .medical], id: \.self) { cat in
+                            Button {
+                                category = cat
+                                label = cat.displayName
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: cat.icon)
+                                        .font(.caption)
+                                    Text(cat.displayName)
+                                        .font(.caption.weight(.medium))
+                                }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(category == cat ? cat.categoryColor.opacity(0.2) : Color(.tertiarySystemGroupedBackground))
+                                .foregroundStyle(category == cat ? cat.categoryColor : .secondary)
+                                .clipShape(Capsule())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+
+                Section("Category") {
+                    Picker("Category", selection: $category) {
+                        ForEach(LocationCategory.allCases, id: \.self) { cat in
+                            Label(cat.displayName, systemImage: cat.icon).tag(cat)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
+
+                Section("Location") {
+                    Picker("Input Type", selection: $inputType) {
+                        Text("Address").tag(LocationInputType.address)
+                        Text("Coordinates").tag(LocationInputType.coordinates)
+                        Text("Current Location").tag(LocationInputType.current)
+                    }
+                    .pickerStyle(.segmented)
+
+                    switch inputType {
+                    case .address:
+                        TextField("Enter address", text: $rawValue, axis: .vertical)
+                            .lineLimit(3...5)
+                    case .coordinates:
+                        TextField("Latitude", text: $latitude)
+                            .keyboardType(.decimalPad)
+                        TextField("Longitude", text: $longitude)
+                            .keyboardType(.decimalPad)
+                    case .current:
+                        Text("Will use current device location")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .navigationTitle("Add Location")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Add") {
+                        saveLocation()
+                    }
+                    .disabled(!canSave)
+                }
+            }
+        }
+    }
+
+    private var canSave: Bool {
+        !label.isEmpty && !locationValue.isEmpty
+    }
+
+    private var locationValue: String {
+        switch inputType {
+        case .address:
+            return rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        case .coordinates:
+            let lat = latitude.trimmingCharacters(in: .whitespacesAndNewlines)
+            let lon = longitude.trimmingCharacters(in: .whitespacesAndNewlines)
+            return !lat.isEmpty && !lon.isEmpty ? "\(lat), \(lon)" : ""
+        case .current:
+            return "Current Location"
+        }
+    }
+
+    private func saveLocation() {
+        let type: LocationType = inputType == .coordinates ? .coordinate : (inputType == .current ? .current : .address)
+        let newLocation = DocumentLocation(
+            rawValue: locationValue,
+            label: label,
+            type: type,
+            category: category
+        )
+        onSave(newLocation)
+    }
+}
+
+private struct EditLocationSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let location: DocumentLocation
+    let document: Document
+    let onSave: (DocumentLocation) -> Void
+
+    @State private var label: String
+    @State private var rawValue: String
+    @State private var category: LocationCategory
+
+    init(location: DocumentLocation, document: Document, onSave: @escaping (DocumentLocation) -> Void) {
+        self.location = location
+        self.document = document
+        self.onSave = onSave
+        _label = State(initialValue: location.label)
+        _rawValue = State(initialValue: location.rawValue)
+        _category = State(initialValue: location.category)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Label") {
+                    TextField("Label", text: $label)
+
+                    // Quick label buttons
+                    HStack(spacing: 8) {
+                        ForEach([LocationCategory.home, .work, .school, .medical], id: \.self) { cat in
+                            Button {
+                                category = cat
+                                label = cat.displayName
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: cat.icon)
+                                        .font(.caption)
+                                    Text(cat.displayName)
+                                        .font(.caption.weight(.medium))
+                                }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(category == cat ? cat.categoryColor.opacity(0.2) : Color(.tertiarySystemGroupedBackground))
+                                .foregroundStyle(category == cat ? cat.categoryColor : .secondary)
+                                .clipShape(Capsule())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+
+                Section("Category") {
+                    Picker("Category", selection: $category) {
+                        ForEach(LocationCategory.allCases, id: \.self) { cat in
+                            Label(cat.displayName, systemImage: cat.icon).tag(cat)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
+
+                Section("Location Value") {
+                    TextField("Address or coordinates", text: $rawValue, axis: .vertical)
+                        .lineLimit(3...5)
+                }
+            }
+            .navigationTitle("Edit Location")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        saveChanges()
+                    }
+                    .disabled(!canSave)
+                }
+            }
+        }
+    }
+
+    private var canSave: Bool {
+        !label.isEmpty && !rawValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func saveChanges() {
+        let updated = DocumentLocation(
+            id: location.id,
+            rawValue: rawValue,
+            label: label,
+            type: location.type,
+            category: category,
+            createdAt: location.createdAt
+        )
+        onSave(updated)
+    }
+}
+
+// Helper extension for category colors
+extension LocationCategory {
+    var categoryColor: Color {
+        switch self {
+        case .home: return .blue
+        case .work: return .orange
+        case .school: return .purple
+        case .medical: return .red
+        case .custom: return .pink
+        }
+    }
 }

@@ -391,14 +391,11 @@ final class AppServices: ObservableObject {
         Task { @MainActor in
             let descriptor = FetchDescriptor<AudioNote>()
             if let audioNotes = try? modelContext.fetch(descriptor) {
-                for note in audioNotes {
-                    // Migrate old notes without status
-                    if note.transcriptionStatus == nil {
-                        if note.transcript != nil && !note.transcript!.isEmpty {
-                            note.transcriptionStatus = .completed
-                        } else {
-                            note.transcriptionStatus = .processing
-                        }
+                for note in audioNotes where note.transcriptionStatus == nil {
+                    if let transcript = note.transcript, !transcript.isEmpty {
+                        note.transcriptionStatus = .completed
+                    } else {
+                        note.transcriptionStatus = .processing
                     }
                 }
                 try? modelContext.save()
