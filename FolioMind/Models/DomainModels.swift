@@ -73,6 +73,69 @@ enum ProcessingStatus: String, Codable, CaseIterable {
     case failed
 }
 
+enum LocationType: String, Codable, CaseIterable {
+    case coordinate
+    case address
+    case current
+}
+
+enum LocationCategory: String, Codable, CaseIterable {
+    case home
+    case work
+    case school
+    case medical
+    case custom
+
+    var icon: String {
+        switch self {
+        case .home: return "house.fill"
+        case .work: return "briefcase.fill"
+        case .school: return "book.fill"
+        case .medical: return "cross.case.fill"
+        case .custom: return "mappin.circle.fill"
+        }
+    }
+
+    var displayName: String {
+        switch self {
+        case .home: return "Home"
+        case .work: return "Work"
+        case .school: return "School"
+        case .medical: return "Medical"
+        case .custom: return "Custom"
+        }
+    }
+}
+
+struct DocumentLocation: Codable, Identifiable, Equatable {
+    let id: UUID
+    var rawValue: String
+    var label: String
+    var type: LocationType
+    var category: LocationCategory
+    let createdAt: Date
+
+    init(
+        id: UUID = UUID(),
+        rawValue: String,
+        label: String,
+        type: LocationType = .address,
+        category: LocationCategory = .custom,
+        createdAt: Date = Date()
+    ) {
+        self.id = id
+        self.rawValue = rawValue
+        self.label = label
+        self.type = type
+        self.category = category
+        self.createdAt = createdAt
+    }
+
+    var displayLabel: String {
+        label.isEmpty ? rawValue : label
+    }
+}
+
 @Model
 final class AudioNote {
     @Attribute(.unique) var id: UUID
@@ -348,7 +411,8 @@ final class Document {
     var fields: [Field]
     var createdAt: Date
     var capturedAt: Date?
-    var location: String?
+    var location: String?  // Deprecated: kept for backward compatibility
+    var locations: [DocumentLocation]  // New: structured locations with labels
     var assets: [Asset]  // Multiple images/files belonging to this document
     var personLinks: [DocumentPersonLink]
     var faceClusterIDs: [UUID]
@@ -368,6 +432,7 @@ final class Document {
         createdAt: Date = Date(),
         capturedAt: Date? = nil,
         location: String? = nil,
+        locations: [DocumentLocation] = [],
         assets: [Asset] = [],
         personLinks: [DocumentPersonLink] = [],
         faceClusterIDs: [UUID] = [],
@@ -386,6 +451,7 @@ final class Document {
         self.createdAt = createdAt
         self.capturedAt = capturedAt
         self.location = location
+        self.locations = locations
         self.assets = assets
         self.personLinks = personLinks
         self.faceClusterIDs = faceClusterIDs
@@ -406,6 +472,39 @@ final class Document {
         assets
             .filter { $0.assetType == .image }
             .sorted { $0.pageNumber < $1.pageNumber }
+    }
+
+    // Helper to get all location strings (for backward compatibility with MapLocationView)
+    var allLocationStrings: [String] {
+        if !locations.isEmpty {
+            return locations.map { $0.rawValue }
+        } else if let location = location, !location.isEmpty {
+            return [location]
+        }
+        return []
+    }
+
+    // Migrate old location string to new locations array
+    func migrateLocationIfNeeded() {
+        guard locations.isEmpty, let location = location, !location.isEmpty else { return }
+
+        // Split by newlines or semicolons to handle multiple locations in old format
+        let locationStrings = location.components(separatedBy: CharacterSet(charactersIn: "\n;"))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        for (index, rawLocation) in locationStrings.enumerated() {
+            let label = locationStrings.count > 1 ? "Location \(index + 1)" : "Location"
+            let locationComponent = rawLocation.components(separatedBy: ",")[0].trimmingCharacters(in: .whitespaces)
+            let type: LocationType = rawLocation.contains(",") && Double(locationComponent) != nil ? .coordinate : .address
+
+            locations.append(DocumentLocation(
+                rawValue: rawLocation,
+                label: label,
+                type: type,
+                category: .custom
+            ))
+        }
     }
 }
 

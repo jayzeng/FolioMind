@@ -108,9 +108,22 @@ final class LibSQLSemanticSearchEngine: SearchEngine {
     private static func keywordScore(document: Document, query: String) -> Double {
         guard !query.isEmpty else { return 1.0 }
 
+        // Build searchable text from document
         let locationText = document.location ?? ""
         let cleanedText = document.cleanedText ?? ""
-        let haystack = (document.title + " " + document.ocrText + " " + cleanedText + " " + locationText).lowercased()
+
+        // Include location labels and raw values from structured locations
+        let locationLabels = document.locations.map { $0.label }.joined(separator: " ")
+        let locationRawValues = document.locations.map { $0.rawValue }.joined(separator: " ")
+
+        let haystack = (
+            document.title + " " +
+            document.ocrText + " " +
+            cleanedText + " " +
+            locationText + " " +
+            locationLabels + " " +
+            locationRawValues
+        ).lowercased()
 
         let tokens = query.lowercased().split(whereSeparator: { $0.isWhitespace || $0.isPunctuation })
         guard !tokens.isEmpty else { return 0 }
