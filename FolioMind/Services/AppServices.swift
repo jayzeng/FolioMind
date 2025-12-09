@@ -39,11 +39,15 @@ final class AudioRecorderService: NSObject, ObservableObject, AVAudioRecorderDel
     }
 
     @Published private(set) var isRecording = false
+    @Published private(set) var isPaused = false
     @Published private(set) var lastError: String?
+    @Published private(set) var audioLevel: Float = 0.0
+    @Published private(set) var currentDuration: TimeInterval = 0.0
 
     private var recorder: AVAudioRecorder?
     private var currentURL: URL?
     private var recordingStartDate: Date?
+    private var levelTimer: Timer?
     private let storageManager = FileStorageManager.shared
 
     func startRecording() async throws -> URL {
@@ -73,6 +77,7 @@ final class AudioRecorderService: NSObject, ObservableObject, AVAudioRecorderDel
         do {
             recorder = try AVAudioRecorder(url: url, settings: settings)
             recorder?.delegate = self
+            recorder?.isMeteringEnabled = true
             guard recorder?.record() == true else {
                 lastError = "Unable to start microphone recording."
                 throw RecorderError.configurationFailed("Unable to start microphone recording.")
@@ -80,12 +85,28 @@ final class AudioRecorderService: NSObject, ObservableObject, AVAudioRecorderDel
             currentURL = url
             recordingStartDate = Date()
             isRecording = true
+            isPaused = false
+            startLevelMonitoring()
             return url
         } catch {
             lastError = error.localizedDescription
             try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
             throw RecorderError.configurationFailed(error.localizedDescription)
         }
+    }
+
+    func pauseRecording() {
+        guard isRecording, !isPaused, let recorder else { return }
+        recorder.pause()
+        isPaused = true
+        stopLevelMonitoring()
+    }
+
+    func resumeRecording() {
+        guard isRecording, isPaused, let recorder else { return }
+        recorder.record()
+        isPaused = false
+        startLevelMonitoring()
     }
 
     func stopRecording() throws -> AudioRecordingResult {
@@ -95,20 +116,50 @@ final class AudioRecorderService: NSObject, ObservableObject, AVAudioRecorderDel
 
         let duration = recorder.currentTime
         recorder.stop()
+        stopLevelMonitoring()
         self.recorder = nil
         currentURL = nil
         recordingStartDate = nil
         isRecording = false
+        isPaused = false
+        audioLevel = 0.0
+        currentDuration = 0.0
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
 
         return AudioRecordingResult(url: url, startedAt: startedAt, duration: duration)
     }
 
-    func audioRecorderEncodeErrorDidOccur(_ recorder: AVAudioRecorder, error: Error?) {
+    nonisolated func audioRecorderEncodeErrorDidOccur(_ recorder: AVAudioRecorder, error: Error?) {
         _ = recorder
         if let error {
-            lastError = error.localizedDescription
+            Task { @MainActor in
+                self.lastError = error.localizedDescription
+            }
         }
+    }
+
+    private func startLevelMonitoring() {
+        levelTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                guard let recorder = await self.recorder else { return }
+                recorder.updateMeters()
+                let averagePower = recorder.averagePower(forChannel: 0)
+                // Convert dB to 0-1 range (dB range typically -160 to 0)
+                let normalizedLevel = pow(10, averagePower / 20)
+                await self.updateAudioMetrics(level: normalizedLevel, duration: recorder.currentTime)
+            }
+        }
+    }
+
+    private func updateAudioMetrics(level: Float, duration: TimeInterval) {
+        self.audioLevel = level
+        self.currentDuration = duration
+    }
+
+    private func stopLevelMonitoring() {
+        levelTimer?.invalidate()
+        levelTimer = nil
     }
 
     private func requestPermission(session: AVAudioSession) async throws -> Bool {
@@ -146,7 +197,9 @@ final class AppServices: ObservableObject {
     let linkingEngine: LinkingEngine
     let reminderManager: ReminderManager
     let audioRecorder: AudioRecorderService
+    let audioPlayer: AudioPlayerService
     let audioNoteManager: AudioNoteManaging
+    let audioTranscriptionService: AudioTranscriptionService
     let llmService: LLMService?
     let authViewModel: AuthViewModel
     let useBackendProcessing: Bool
@@ -277,22 +330,28 @@ final class AppServices: ObservableObject {
             audioNoteManager = AudioNoteManager(llmService: llmService)
         }
 
-        embeddingService = SimpleEmbeddingService()
+        // Use Apple's on-device embedding service for real 768D vectors
+        embeddingService = AppleEmbeddingService()
+
         linkingEngine = BasicLinkingEngine()
         reminderManager = ReminderManager()
         audioRecorder = AudioRecorderService()
+        audioPlayer = AudioPlayerService()
+        audioTranscriptionService = AudioTranscriptionService(audioNoteManager: audioNoteManager)
         self.llmService = llmService
         self.libSQLStore = libSQLStore
         self.useBackendProcessing = useBackend
 
         let modelContext = ModelContext(modelContainer)
         if let libSQLStore {
-            searchEngine = LibSQLSearchEngine(
+            // Use new LibSQLSemanticSearchEngine with vector storage
+            searchEngine = LibSQLSemanticSearchEngine(
                 modelContext: modelContext,
                 embeddingService: embeddingService,
-                libSQLStore: libSQLStore
+                vectorStore: libSQLStore
             )
         } else {
+            // Fallback to old HybridSearchEngine if LibSQL not available
             searchEngine = HybridSearchEngine(
                 modelContext: modelContext,
                 embeddingService: embeddingService
@@ -326,6 +385,27 @@ final class AppServices: ObservableObject {
                     }
                 }
             }
+        }
+
+        // Migrate existing audio notes to have transcription status
+        Task { @MainActor in
+            let descriptor = FetchDescriptor<AudioNote>()
+            if let audioNotes = try? modelContext.fetch(descriptor) {
+                for note in audioNotes {
+                    // Migrate old notes without status
+                    if note.transcriptionStatus == nil {
+                        if note.transcript != nil && !note.transcript!.isEmpty {
+                            note.transcriptionStatus = .completed
+                        } else {
+                            note.transcriptionStatus = .processing
+                        }
+                    }
+                }
+                try? modelContext.save()
+            }
+
+            // Process pending audio transcriptions on startup
+            await audioTranscriptionService.processPending(in: modelContext)
         }
     }
 }
@@ -427,6 +507,12 @@ final class DocumentStore {
 
         if let libSQLStore {
             try? libSQLStore.upsertDocument(document, embedding: embedding)
+            // Also store in new vector table
+            try? libSQLStore.upsertDocumentEmbedding(
+                documentID: document.id,
+                vector: embedding.vector,
+                modelVersion: "apple-embed-v1"
+            )
         }
 
         return document
@@ -435,11 +521,7 @@ final class DocumentStore {
     func delete(at offsets: IndexSet, from documents: [Document], in context: ModelContext) {
         for index in offsets {
             let document = documents[index]
-            let id = document.id
-            context.delete(document)
-            if let libSQLStore {
-                try? libSQLStore.deleteDocument(id: id)
-            }
+            try? deleteDocument(document, in: context, autoSave: false)
         }
         try? context.save()
     }
@@ -451,20 +533,47 @@ final class DocumentStore {
         guard !samples.isEmpty else { return 0 }
 
         for document in samples {
-            let id = document.id
-            for asset in document.imageAssets {
-                let url = URL(fileURLWithPath: asset.fileURL)
-                try? storageManager.deleteFile(at: url)
-            }
-            context.delete(document)
-
-            if let libSQLStore {
-                try? libSQLStore.deleteDocument(id: id)
-            }
+            try deleteDocument(document, in: context, autoSave: false)
         }
 
         try context.save()
         return samples.count
+    }
+
+    func deleteDocument(
+        _ document: Document,
+        in context: ModelContext,
+        autoSave: Bool = true
+    ) throws {
+        let id = document.id
+
+        // Remove associated asset files and models
+        for asset in document.assets {
+            let assetURL = URL(fileURLWithPath: asset.fileURL)
+            if storageManager.fileExists(atPath: asset.fileURL) {
+                try? storageManager.deleteFile(at: assetURL)
+            }
+            context.delete(asset)
+        }
+
+        // Clean up linked models to avoid orphans
+        document.fields.forEach { context.delete($0) }
+        document.personLinks.forEach { context.delete($0) }
+        document.reminders.forEach { context.delete($0) }
+
+        if let embedding = document.embedding {
+            context.delete(embedding)
+        }
+
+        context.delete(document)
+
+        if let libSQLStore {
+            try? libSQLStore.deleteDocument(id: id)
+        }
+
+        if autoSave {
+            try context.save()
+        }
     }
 
     private func stubMetadata(
@@ -825,6 +934,12 @@ final class DocumentStore {
 
         if let libSQLStore {
             try? libSQLStore.upsertDocument(document, embedding: embedding)
+            // Also store in new vector table
+            try? libSQLStore.upsertDocumentEmbedding(
+                documentID: document.id,
+                vector: embedding.vector,
+                modelVersion: "apple-embed-v1"
+            )
         }
 
         return document
@@ -918,6 +1033,14 @@ final class DocumentStore {
 
                 if let libSQLStore {
                     try? libSQLStore.upsertDocument(document, embedding: document.embedding)
+                    // Also store in new vector table
+                    if let embedding = document.embedding {
+                        try? libSQLStore.upsertDocumentEmbedding(
+                            documentID: document.id,
+                            vector: embedding.vector,
+                            modelVersion: "apple-embed-v1"
+                        )
+                    }
                 }
 
                 return
@@ -1025,6 +1148,14 @@ final class DocumentStore {
 
         if let libSQLStore {
             try? libSQLStore.upsertDocument(document, embedding: document.embedding)
+            // Also store in new vector table
+            if let embedding = document.embedding {
+                try? libSQLStore.upsertDocumentEmbedding(
+                    documentID: document.id,
+                    vector: embedding.vector,
+                    modelVersion: "apple-embed-v1"
+                )
+            }
         }
 
         return document

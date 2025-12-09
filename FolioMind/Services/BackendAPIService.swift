@@ -104,17 +104,22 @@ struct AnalyzeResponse: Codable {
 
 struct UploadResponseWithMetadata: Codable {
     let ocrText: String?
-    let transcription: String?
-    let documentType: String
-    let confidence: Double
-    let signals: ClassificationSignals
-    let fields: [FieldModel]
+    let extractedText: String?
+    let documentType: String?
+    let confidence: Double?
+    let signals: ClassificationSignals?
+    let fields: [FieldModel]?
 
     enum CodingKeys: String, CodingKey {
         case ocrText = "ocr_text"
-        case transcription
+        case extractedText = "extracted_text"
         case documentType = "document_type"
         case confidence, signals, fields
+    }
+
+    // Computed property to get transcription from either field
+    var transcription: String? {
+        extractedText ?? ocrText
     }
 }
 
@@ -318,10 +323,15 @@ final class BackendAPIService {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        // Add authentication header if available
+        // Add authentication header if available and user is authenticated
         if let tokenManager = tokenManager {
-            let token = try await tokenManager.validAccessToken()
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            do {
+                let token = try await tokenManager.validAccessToken()
+                request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            } catch {
+                // User not authenticated - continue without auth header
+                print("ℹ️ No valid auth token available, making unauthenticated request")
+            }
         }
 
         let encoder = JSONEncoder()
@@ -341,10 +351,15 @@ final class BackendAPIService {
         request.httpMethod = "POST"
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
 
-        // Add authentication header if available
+        // Add authentication header if available and user is authenticated
         if let tokenManager = tokenManager {
-            let token = try await tokenManager.validAccessToken()
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            do {
+                let token = try await tokenManager.validAccessToken()
+                request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            } catch {
+                // User not authenticated - continue without auth header
+                print("ℹ️ No valid auth token available, making unauthenticated request")
+            }
         }
 
         var body = Data()
@@ -375,10 +390,15 @@ final class BackendAPIService {
         request.httpMethod = "POST"
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
 
-        // Add authentication header if available
+        // Add authentication header if available and user is authenticated
         if let tokenManager = tokenManager {
-            let token = try await tokenManager.validAccessToken()
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            do {
+                let token = try await tokenManager.validAccessToken()
+                request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            } catch {
+                // User not authenticated - continue without auth header
+                print("ℹ️ No valid auth token available, making unauthenticated request")
+            }
         }
 
         var body = Data()
@@ -403,22 +423,92 @@ final class BackendAPIService {
     }
 
     private func performRequest<R: Decodable>(_ request: URLRequest) async throws -> R {
-        let (data, response) = try await session.data(for: request)
+        // Try the request
+        let result: Result<R, APIError> = await performRequestOnce(request)
 
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw APIError.invalidResponse
-        }
+        switch result {
+        case .success(let decoded):
+            return decoded
+        case .failure(let error):
+            // Only attempt refresh if:
+            // 1. It's a 401 error
+            // 2. We have a token manager
+            // 3. The request already had an auth header (meaning we tried with a token)
+            if case .httpError(statusCode: 401, _) = error,
+               let tokenManager = tokenManager,
+               request.value(forHTTPHeaderField: "Authorization") != nil {
+                print("🔄 Got 401, attempting to refresh token and retry...")
 
-        guard (200...299).contains(httpResponse.statusCode) else {
-            let message = String(data: data, encoding: .utf8)
-            throw APIError.httpError(statusCode: httpResponse.statusCode, message: message)
+                // Refresh the token
+                do {
+                    let newToken = try await tokenManager.validAccessToken()
+
+                    // Retry the request with the new token
+                    var retryRequest = request
+                    retryRequest.setValue("Bearer \(newToken)", forHTTPHeaderField: "Authorization")
+
+                    let retryResult: Result<R, APIError> = await performRequestOnce(retryRequest)
+                    switch retryResult {
+                    case .success(let decoded):
+                        print("✅ Retry successful after token refresh")
+                        return decoded
+                    case .failure(let retryError):
+                        // If retry also fails, throw the retry error
+                        throw retryError
+                    }
+                } catch let authError as AuthError {
+                    // If token refresh itself failed, throw authentication required
+                    print("❌ Token refresh failed: \(authError.localizedDescription)")
+                    throw APIError.authenticationRequired
+                } catch {
+                    // For other errors during refresh, just rethrow
+                    print("❌ Error during token refresh: \(error.localizedDescription)")
+                    throw error
+                }
+            }
+
+            // If we didn't attempt retry, throw the original error
+            throw error
         }
+    }
+
+    private func performRequestOnce<R: Decodable>(_ request: URLRequest) async -> Result<R, APIError> {
+        var responseData: Data?
 
         do {
+            let (data, response) = try await session.data(for: request)
+            responseData = data
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                return .failure(.invalidResponse)
+            }
+
+            guard (200...299).contains(httpResponse.statusCode) else {
+                let message = String(data: data, encoding: .utf8)
+                print("❌ HTTP \(httpResponse.statusCode): \(message ?? "no response body")")
+                return .failure(.httpError(statusCode: httpResponse.statusCode, message: message))
+            }
+
+            // Log response for debugging
+            if let url = request.url?.path, url.contains("audio") {
+                if let jsonString = String(data: data, encoding: .utf8) {
+                    print("📥 Audio upload response (\(data.count) bytes): \(jsonString.prefix(500))")
+                }
+            }
+
             let decoder = JSONDecoder()
-            return try decoder.decode(R.self, from: data)
+            let decoded = try decoder.decode(R.self, from: data)
+            return .success(decoded)
+        } catch let error as APIError {
+            return .failure(error)
+        } catch let decodingError as DecodingError {
+            print("❌ JSON decoding error: \(decodingError)")
+            if let data = responseData, let jsonString = String(data: data, encoding: .utf8) {
+                print("📄 Raw response that failed to decode: \(jsonString)")
+            }
+            return .failure(.decodingError(decodingError))
         } catch {
-            throw APIError.decodingError(error)
+            return .failure(.networkError(error))
         }
     }
 }

@@ -49,6 +49,30 @@ struct SettingsView: View {
                     Text("Change the app language. The interface updates right away without restarting.")
                 }
 
+                // Search Section
+                Section {
+                    NavigationLink {
+                        EmbeddingMigrationView()
+                            .environmentObject(services)
+                    } label: {
+                        HStack {
+                            Image(systemName: "magnifyingglass.circle.fill")
+                                .foregroundStyle(.blue)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Search Upgrade")
+                                    .font(.body)
+                                Text("Upgrade to semantic search with on-device AI")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                } header: {
+                    Text("Features")
+                } footer: {
+                    Text("Improve search quality with Apple's on-device embeddings. All processing happens locally for privacy.")
+                }
+
                 // Privacy Section
                 Section {
                     VStack(alignment: .leading, spacing: 12) {

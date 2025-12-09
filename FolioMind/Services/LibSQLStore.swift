@@ -51,6 +51,188 @@ final class LibSQLStore {
 
     // MARK: - Public API
 
+    /// Insert or update a document embedding using the new vector table
+    func upsertDocumentEmbedding(documentID: UUID, vector: [Double], modelVersion: String = "apple-embed-v1") throws {
+        try withConnection { db in
+            let sql = """
+            INSERT INTO document_embeddings (document_id, embedding, model_version, dimension, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(document_id) DO UPDATE SET
+                embedding = excluded.embedding,
+                model_version = excluded.model_version,
+                dimension = excluded.dimension,
+                created_at = excluded.created_at;
+            """
+
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+                throw StoreError.statementFailed(errorMessage(from: db))
+            }
+            defer { sqlite3_finalize(stmt) }
+
+            sqlite3_bind_text(stmt, 1, documentID.uuidString, -1, sqliteTransientDestructor)
+
+            // Encode vector as blob (Float32 array for compatibility with F32_BLOB)
+            let blob = vector.withUnsafeBytes { bytes in
+                Data(bytes)
+            }
+            blob.withUnsafeBytes { rawBufferPointer in
+                sqlite3_bind_blob(stmt, 2, rawBufferPointer.baseAddress, Int32(blob.count), sqliteTransientDestructor)
+            }
+
+            sqlite3_bind_text(stmt, 3, modelVersion, -1, sqliteTransientDestructor)
+            sqlite3_bind_int(stmt, 4, Int32(vector.count))
+            sqlite3_bind_double(stmt, 5, Date().timeIntervalSince1970)
+
+            guard sqlite3_step(stmt) == SQLITE_DONE else {
+                throw StoreError.statementFailed(errorMessage(from: db))
+            }
+        }
+    }
+
+    /// Batch insert document embeddings (more efficient for bulk operations)
+    func batchUpsertDocumentEmbeddings(
+        _ embeddings: [(documentID: UUID, vector: [Double])],
+        modelVersion: String = "apple-embed-v1"
+    ) throws {
+        try withConnection { db in
+            // Begin transaction for batch insert
+            guard sqlite3_exec(db, "BEGIN TRANSACTION;", nil, nil, nil) == SQLITE_OK else {
+                throw StoreError.statementFailed(errorMessage(from: db))
+            }
+
+            do {
+                for (documentID, vector) in embeddings {
+                    let sql = """
+                    INSERT INTO document_embeddings (document_id, embedding, model_version, dimension, created_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(document_id) DO UPDATE SET
+                        embedding = excluded.embedding,
+                        model_version = excluded.model_version,
+                        dimension = excluded.dimension,
+                        created_at = excluded.created_at;
+                    """
+
+                    var stmt: OpaquePointer?
+                    guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+                        throw StoreError.statementFailed(errorMessage(from: db))
+                    }
+                    defer { sqlite3_finalize(stmt) }
+
+                    sqlite3_bind_text(stmt, 1, documentID.uuidString, -1, sqliteTransientDestructor)
+
+                    let blob = vector.withUnsafeBytes { bytes in Data(bytes) }
+                    blob.withUnsafeBytes { rawBufferPointer in
+                        sqlite3_bind_blob(stmt, 2, rawBufferPointer.baseAddress, Int32(blob.count), sqliteTransientDestructor)
+                    }
+
+                    sqlite3_bind_text(stmt, 3, modelVersion, -1, sqliteTransientDestructor)
+                    sqlite3_bind_int(stmt, 4, Int32(vector.count))
+                    sqlite3_bind_double(stmt, 5, Date().timeIntervalSince1970)
+
+                    guard sqlite3_step(stmt) == SQLITE_DONE else {
+                        throw StoreError.statementFailed(errorMessage(from: db))
+                    }
+                }
+
+                // Commit transaction
+                guard sqlite3_exec(db, "COMMIT;", nil, nil, nil) == SQLITE_OK else {
+                    throw StoreError.statementFailed(errorMessage(from: db))
+                }
+            } catch {
+                // Rollback on error
+                _ = sqlite3_exec(db, "ROLLBACK;", nil, nil, nil)
+                throw error
+            }
+        }
+    }
+
+    /// Retrieve document embedding vector
+    func getDocumentEmbedding(documentID: UUID) throws -> [Double]? {
+        try withConnection { db in
+            let sql = """
+            SELECT embedding, dimension
+            FROM document_embeddings
+            WHERE document_id = ?;
+            """
+
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+                throw StoreError.statementFailed(errorMessage(from: db))
+            }
+            defer { sqlite3_finalize(stmt) }
+
+            sqlite3_bind_text(stmt, 1, documentID.uuidString, -1, sqliteTransientDestructor)
+
+            guard sqlite3_step(stmt) == SQLITE_ROW else {
+                return nil
+            }
+
+            // Read blob and convert back to [Double]
+            guard let blobPointer = sqlite3_column_blob(stmt, 0) else {
+                return nil
+            }
+
+            let blobSize = sqlite3_column_bytes(stmt, 0)
+            let dimension = Int(sqlite3_column_int(stmt, 1))
+
+            let data = Data(bytes: blobPointer, count: Int(blobSize))
+            return data.withUnsafeBytes { rawBuffer in
+                Array(rawBuffer.bindMemory(to: Double.self))
+            }
+        }
+    }
+
+    /// Full-text search using FTS5 (if available)
+    /// Returns document IDs that match the query
+    func ftsSearch(query: String, limit: Int = 100) throws -> [UUID] {
+        try withConnection { db in
+            // Check if FTS table exists
+            let checkTableSQL = "SELECT name FROM sqlite_master WHERE type='table' AND name='documents_fts';"
+            var checkStmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, checkTableSQL, -1, &checkStmt, nil) == SQLITE_OK else {
+                return [] // FTS not available
+            }
+
+            let ftsExists = sqlite3_step(checkStmt) == SQLITE_ROW
+            sqlite3_finalize(checkStmt)
+
+            guard ftsExists else {
+                return [] // FTS not available
+            }
+
+            // Perform FTS search
+            let sql = """
+            SELECT document_id
+            FROM documents_fts
+            WHERE documents_fts MATCH ?
+            ORDER BY rank
+            LIMIT ?;
+            """
+
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+                throw StoreError.statementFailed(errorMessage(from: db))
+            }
+            defer { sqlite3_finalize(stmt) }
+
+            sqlite3_bind_text(stmt, 1, query, -1, sqliteTransientDestructor)
+            sqlite3_bind_int(stmt, 2, Int32(limit))
+
+            var documentIDs: [UUID] = []
+
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                guard let idCString = sqlite3_column_text(stmt, 0),
+                      let uuid = UUID(uuidString: String(cString: idCString)) else {
+                    continue
+                }
+                documentIDs.append(uuid)
+            }
+
+            return documentIDs
+        }
+    }
+
     func upsertDocument(_ document: Document, embedding: Embedding?) throws {
         try withConnection { db in
             let sql = """
@@ -128,6 +310,30 @@ final class LibSQLStore {
 
             sqlite3_bind_text(embeddingStmt, 1, id.uuidString, -1, sqliteTransientDestructor)
             guard sqlite3_step(embeddingStmt) == SQLITE_DONE else {
+                throw StoreError.statementFailed(errorMessage(from: db))
+            }
+
+            let vectorSQL = "DELETE FROM document_embeddings WHERE document_id = ?;"
+            var vectorStmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, vectorSQL, -1, &vectorStmt, nil) == SQLITE_OK else {
+                throw StoreError.statementFailed(errorMessage(from: db))
+            }
+            defer { sqlite3_finalize(vectorStmt) }
+
+            sqlite3_bind_text(vectorStmt, 1, id.uuidString, -1, sqliteTransientDestructor)
+            guard sqlite3_step(vectorStmt) == SQLITE_DONE else {
+                throw StoreError.statementFailed(errorMessage(from: db))
+            }
+
+            let assetsSQL = "DELETE FROM assets WHERE document_id = ?;"
+            var assetsStmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, assetsSQL, -1, &assetsStmt, nil) == SQLITE_OK else {
+                throw StoreError.statementFailed(errorMessage(from: db))
+            }
+            defer { sqlite3_finalize(assetsStmt) }
+
+            sqlite3_bind_text(assetsStmt, 1, id.uuidString, -1, sqliteTransientDestructor)
+            guard sqlite3_step(assetsStmt) == SQLITE_DONE else {
                 throw StoreError.statementFailed(errorMessage(from: db))
             }
         }
@@ -235,12 +441,36 @@ final class LibSQLStore {
             );
             """
 
+            // Legacy embeddings table (keep for backward compatibility during migration)
             let createEmbeddings = """
             CREATE TABLE IF NOT EXISTS embeddings (
                 id TEXT PRIMARY KEY,
                 entity_type TEXT NOT NULL,
                 entity_id TEXT NOT NULL,
                 vector_json TEXT NOT NULL
+            );
+            """
+
+            // New vector search tables with F32_BLOB support
+            // Note: F32_BLOB is a libsql extension, falls back to BLOB in standard SQLite
+            let createDocumentEmbeddings = """
+            CREATE TABLE IF NOT EXISTS document_embeddings (
+                document_id TEXT PRIMARY KEY,
+                embedding BLOB,
+                model_version TEXT NOT NULL DEFAULT 'apple-embed-v1',
+                dimension INTEGER NOT NULL DEFAULT 768,
+                created_at REAL NOT NULL,
+                FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE
+            );
+            """
+
+            let createAudioEmbeddings = """
+            CREATE TABLE IF NOT EXISTS audio_embeddings (
+                audio_note_id TEXT PRIMARY KEY,
+                embedding BLOB,
+                model_version TEXT NOT NULL DEFAULT 'apple-embed-v1',
+                dimension INTEGER NOT NULL DEFAULT 768,
+                created_at REAL NOT NULL
             );
             """
 
@@ -265,10 +495,75 @@ final class LibSQLStore {
             );
             """
 
-            for sql in [createDocuments, createEmbeddings, createAssets, createUsers]
+            for sql in [createDocuments, createEmbeddings, createDocumentEmbeddings, createAudioEmbeddings, createAssets, createUsers]
             where sqlite3_exec(db, sql, nil, nil, nil) != SQLITE_OK {
                 throw StoreError.statementFailed(errorMessage(from: db))
             }
+
+            // Create vector indexes (libsql specific - will be no-op in standard SQLite)
+            // In production with libsql, these would be: CREATE INDEX idx_name ON table(libsql_vector_idx(embedding))
+            // For now, we create standard indexes which will work in both SQLite and libsql
+            let createDocumentEmbeddingIndex = """
+            CREATE INDEX IF NOT EXISTS idx_document_embeddings_lookup
+            ON document_embeddings(document_id);
+            """
+
+            let createAudioEmbeddingIndex = """
+            CREATE INDEX IF NOT EXISTS idx_audio_embeddings_lookup
+            ON audio_embeddings(audio_note_id);
+            """
+
+            for sql in [createDocumentEmbeddingIndex, createAudioEmbeddingIndex]
+            where sqlite3_exec(db, sql, nil, nil, nil) != SQLITE_OK {
+                throw StoreError.statementFailed(errorMessage(from: db))
+            }
+
+            // Create FTS5 virtual tables for full-text search
+            let createDocumentsFTS = """
+            CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
+                document_id UNINDEXED,
+                title,
+                ocr_text,
+                cleaned_text,
+                location,
+                tokenize='unicode61 remove_diacritics 2'
+            );
+            """
+
+            if sqlite3_exec(db, createDocumentsFTS, nil, nil, nil) != SQLITE_OK {
+                // FTS5 might not be available in all SQLite builds, continue without it
+                print("Warning: FTS5 not available, keyword search will use basic matching")
+            }
+
+            // Create triggers to keep FTS in sync with documents table
+            let createFTSTriggerInsert = """
+            CREATE TRIGGER IF NOT EXISTS documents_fts_ai AFTER INSERT ON documents BEGIN
+                INSERT INTO documents_fts(document_id, title, ocr_text, cleaned_text, location)
+                VALUES(new.id, new.title, new.ocr_text, new.cleaned_text, new.location);
+            END;
+            """
+
+            let createFTSTriggerUpdate = """
+            CREATE TRIGGER IF NOT EXISTS documents_fts_au AFTER UPDATE ON documents BEGIN
+                UPDATE documents_fts SET
+                    title = new.title,
+                    ocr_text = new.ocr_text,
+                    cleaned_text = new.cleaned_text,
+                    location = new.location
+                WHERE document_id = new.id;
+            END;
+            """
+
+            let createFTSTriggerDelete = """
+            CREATE TRIGGER IF NOT EXISTS documents_fts_ad AFTER DELETE ON documents BEGIN
+                DELETE FROM documents_fts WHERE document_id = old.id;
+            END;
+            """
+
+            // Try to create triggers (will succeed only if FTS5 table exists)
+            _ = sqlite3_exec(db, createFTSTriggerInsert, nil, nil, nil)
+            _ = sqlite3_exec(db, createFTSTriggerUpdate, nil, nil, nil)
+            _ = sqlite3_exec(db, createFTSTriggerDelete, nil, nil, nil)
         }
     }
 

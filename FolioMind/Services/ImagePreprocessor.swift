@@ -13,6 +13,12 @@ import UIKit
 #if canImport(Vision)
 import Vision
 #endif
+#if canImport(ImageIO)
+import ImageIO
+#endif
+#if canImport(UniformTypeIdentifiers)
+import UniformTypeIdentifiers
+#endif
 
 enum ImagePreprocessor {
     /// Normalize orientation and downscale for preview/OCR to avoid memory spikes.
@@ -115,4 +121,77 @@ enum ImagePreprocessor {
             image.draw(in: CGRect(origin: .zero, size: newSize))
         }
     }
+
+    /// Normalize, downscale, and auto-crop an image for ingestion. Falls back gracefully if Vision fails.
+    static func processForIngestion(_ image: UIImage, maxDimension: CGFloat = 2400) async -> UIImage {
+        let prepared = preparePreviewImage(from: image, maxDimension: maxDimension)
+        if let cropped = try? await autoCrop(prepared) {
+            return cropped
+        }
+        return prepared
+    }
+
+    /// Produce JPEG data from raw image data after applying normalization and auto-crop.
+    static func processedJPEGData(from data: Data, quality: CGFloat = 0.9) async -> Data? {
+        guard let image = UIImage(data: data) else { return nil }
+        let processed = await processForIngestion(image)
+        return processed.jpegData(compressionQuality: quality)
+    }
+
+    /// Load an image from disk, auto-crop/normalize it, and write it back to the same URL.
+    static func processFileInPlace(_ url: URL, quality: CGFloat = 0.9) async -> URL? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        guard let processedData = await processedJPEGData(from: data, quality: quality) else { return nil }
+
+        #if canImport(ImageIO)
+        let metadata = copyImageMetadata(from: url)
+        #endif
+
+        do {
+            #if canImport(ImageIO)
+            if let metadata, let merged = embedMetadata(metadata, into: processedData) {
+                try merged.write(to: url, options: .atomic)
+                return url
+            }
+            #endif
+
+            try processedData.write(to: url, options: .atomic)
+            return url
+        } catch {
+            print("Failed to write processed image to disk: \(error)")
+            return nil
+        }
+    }
+
+    #if canImport(ImageIO)
+    private static func copyImageMetadata(from url: URL) -> [String: Any]? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        return CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any]
+    }
+
+    private static func embedMetadata(_ metadata: [String: Any], into imageData: Data) -> Data? {
+        let output = NSMutableData()
+
+        let destinationType: CFString
+        #if canImport(UniformTypeIdentifiers)
+        destinationType = UTType.jpeg.identifier as CFString
+        #else
+        destinationType = "public.jpeg" as CFString
+        #endif
+
+        guard
+            let source = CGImageSourceCreateWithData(imageData as CFData, nil),
+            let destination = CGImageDestinationCreateWithData(output, destinationType, 1, nil)
+        else {
+            return nil
+        }
+
+        var updatedMetadata = metadata
+        updatedMetadata[kCGImagePropertyOrientation as String] = 1
+
+        CGImageDestinationAddImageFromSource(destination, source, 0, updatedMetadata as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        return output as Data
+    }
+    #endif
 }

@@ -64,8 +64,14 @@ final class BackendAudioNoteManager: AudioNoteManaging {
         do {
             let response = try await backendService.uploadAudio(url)
 
+            print("📦 Backend response - transcription: \(response.transcription ?? "nil"), documentType: \(response.documentType ?? "nil")")
+
             guard let transcription = response.transcription, !transcription.isEmpty else {
-                throw AudioNoteError.transcriptionFailed("No transcription received from backend")
+                let errorMsg =
+                    "Backend returned empty or null transcription. This usually means the /api/v1/upload/audio endpoint " +
+                    "is not implemented or returned an unexpected response format."
+                print("❌ \(errorMsg)")
+                throw AudioNoteError.transcriptionFailed(errorMsg)
             }
 
             print("✅ Backend transcribed audio: \(transcription.prefix(100))...")
